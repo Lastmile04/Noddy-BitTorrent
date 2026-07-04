@@ -18,10 +18,6 @@ const torrentMeta = parseTorrentFile(torrentPath);
 const peerId = generatePeerId('PC', '0001');
 const left = torrentMeta.totalLength;
 
-// console.log('trackers:', torrentMeta.announceList);
-// console.log('infoHash:', torrentMeta.infoHash);
-// console.log('peerId:', peerId);
-// console.log('left: ', left)
 
 // Static/identity -> peerID, port
 // Torrnet Specific -> infoHash, left
@@ -53,8 +49,3 @@ console.log(`⏱ Announce interval: ${result.peerStats.interval}`);
 
 const peerList = result.peers;
 const handshake = await createClient(peerList, peerId, torrentMeta);
-
-
-// server.listen(port, '0.0.0.0', () => { // Bind to all interfaces
-//     console.log('BitTorrent peer server listening on port 4000');
-// });

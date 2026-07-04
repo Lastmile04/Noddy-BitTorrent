@@ -1,20 +1,35 @@
+//NOTE: This might seem confusing but the reason decode does not work in a loop is becasue the entire .torrent file is passed on as buffer parameter, so what we initially receive as a buffer is a big dictionary and not buffer chunk by chunk needing to call decode after every single data type is parsed
 import { Buffer } from 'buffer';
-
+/**
+ * Takes the bencoded .torrent files and parses it based on binary encoded principles
+ *
+ * string -> <length>:<payload/string> i.e 4:bark { before delimiter : is length after that is string 
+ * int -> i<integer>e 
+ * list -> l<list>e  ( i.e : li32e4:barkli45e3:catee -> [32, 'bark', [45, cat]] 
+ * dict -> d<key>:<value> <key>:<value>e ( d3:cat:i34e4:span:li32e4:barkli45e3:catee 
+ * -> { cat : 34, span : [32, 'bark', [45, cat]] }
+ *
+ */
 const MAX_ALLOWED = 655360;
 // helper function
 function isDigit(byte) {
-    return byte >= 0x30 && byte <= 0x39
+    return byte >= 0x30 && byte <= 0x39 // from 0-9
 }
 
-const ProtocolTypes = {
+export const ProtocolTypes = {
     INTEGER: 'Integer',
     STRING: 'String', // Represents byte sequences (Buffer)
     LIST: 'List',
     DICT: 'Dictionary'
 };
 
-//main parsing decider
-function decode(buffer, offset) {
+/**
+ * Recursive Descent Parsing dispatcher decides which parsing function to send the buffer by peeking at the first element in buffer.
+ * @param {Buffer} buffer The actual buffer with data
+ * @param {Number} offset The offset at which to peek the type of data.
+ * @public
+ */
+export function decode(buffer, offset) {
     const peek = buffer[offset];
     switch (peek) {
         case 0x64: // 'd' -> Dictionary
@@ -32,7 +47,14 @@ function decode(buffer, offset) {
             throw new Error(`Unknown type ${peek.toString(16)} at offset ${offset}`);
     }
 }
-// integer parsing
+
+/**
+ * Parses integer based on buffer data and current offset
+ *
+ * @parma {Buffer} buffer The buffer to extract integer from
+ * @param {Number} offset The offset at which to start writing
+ * @public
+ */
 function parseInteger(buffer, offset) {
     let i = offset + 1; //skip 'i'
     let sign = 1;
@@ -76,7 +98,14 @@ function parseInteger(buffer, offset) {
         nextOffset: offset
     };
 }
-// string parsing
+
+/**
+ * Parses strings based on buffer data and current offset
+ *
+ * @parma {Buffer} buffer The buffer to extract string from
+ * @param {Number} offset The offset at which to start writing
+ * @public
+ */
 function parseString(buffer, offset) {
     let i = offset
     let strLength = 0;
@@ -131,7 +160,14 @@ function parseString(buffer, offset) {
         };
     }
 }
-// list parsing
+
+/**
+ * Parses list based on buffer data and current offset
+ *
+ * @parma {Buffer} buffer The buffer to extract list from
+ * @param {Number} offset The offset at which to start writing
+ * @public
+ */
 function parseList(buffer, offset) {
     if (buffer[offset] !== 0x6c) throw new Error('Protocol violation: first byte is not "0x6c" ');
     const listStartOffset = offset;
@@ -163,7 +199,15 @@ function parseList(buffer, offset) {
         nextOffset: listStartOffset
     };
 }
-//dictionary parsing
+
+
+/**
+ * Parses dictionary based on buffer data and current offset
+ *
+ * @parma {Buffer} buffer The buffer to extract dictionary from
+ * @param {Number} offset The offset at which to start writing
+ * @public
+ */
 function parseDictionary(buffer, offset) {
     if (buffer[offset] !== 0x64) throw new Error('Protocol violation: Expected dictionary');
     const dictStartOffset = offset;
@@ -213,7 +257,9 @@ function parseDictionary(buffer, offset) {
     };
 }
 
-
+//NOTE: Have to implement CircularBuffer/Buffer Pool
+// Unncessary encode function code not required for current project functioning
+/*
 function encode(irObject) {
 
     // Only accept Valid Protocol Values
@@ -285,6 +331,7 @@ function encodeDict(pairs) {
 }
 
 export { decode, encode, ProtocolTypes };
+*/
 
-//Optimize the buffer growth.
-// Have to implement CircularBuffer/Buffer Pools
+
+
