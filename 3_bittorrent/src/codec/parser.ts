@@ -1,7 +1,6 @@
-/** 
- * @param {Buffer} buffer The actual buffer with data
- * @param {Number} offset The offset at which to peek the type of data.
- * @public
+/**
+ * @param buffer The buffer containing bencoded data.
+ * @param offset The offset at which to peek the next value type.
  */
 
 function parseNode(buffer: Buffer, offset: number) {
