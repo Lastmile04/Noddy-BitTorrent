@@ -13,7 +13,7 @@ export const BencodeTokens = {
 } as const
 
 // a helper function to tell if the byte is between 0-9
-export function isAscaiiIDigit(byte: number) {
+export function isAsciiDigit(byte: number) {
     return byte >= BencodeTokens.ASCII_ZERO &&
            byte <= BencodeTokens.ASCII_NINE
 }
