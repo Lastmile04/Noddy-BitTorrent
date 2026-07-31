@@ -24,5 +24,10 @@ export interface DictNode extends BaseNode {
     value: [ByteStringNode, Node][];   // Array of key-value pairs protecting structural correctness
 }
 
-// The Unified Node Family: This is your Discriminated Union
+export interface ParseResult<T extends Node = Node> {
+    node: T,
+    nextOffset: number,
+}
+
+// The Unified Node Family: This is the Discriminated Union
 export type Node = ByteStringNode | IntegerNode | ListNode | DictNode;
