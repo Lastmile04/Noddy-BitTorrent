@@ -1,5 +1,5 @@
 const KEYS = {
-    // main functin keys
+    // main function keys
     ANNOUNCE: Buffer.from('announce'),
     ANNOUNCE_LIST: Buffer.from('announce-list'),
     INFO: Buffer.from('info'),
@@ -13,138 +13,159 @@ const KEYS = {
     PATH: Buffer.from('path')
 };
 
-export function torrentMetadataExtraction(decodedRootIR) {
-    if (decodedRootIR.type !== 'Dictionary') throw new Error('Expected Dictionary at root');
+export function torrentMetadataExtraction(decodedNode) {
+    if (decodedNode.type !== 'DICT') throw new Error('Expected Dictionary at root');
 
-    const pairs = decodedRootIR.value;
-    let announceListVal,
-        infoSectionVal;
+    const pairs = decodedNode.value;
+    let announceListNode = null,
+        announceNode = null,
+        infoSectionNode = null,
+        infoSectionPresent = false;
 
-    for (const [keyBuffer, valueIR] of pairs) {
+    for (const [keyNode, valueNode] of pairs) {
+        if (keyNode.type !== 'BYTE_STRING') throw new Error("The keys of dict pair must be a byte string");
+        const keyBuf = keyNode.value;
 
-        if (keyBuffer.equals(KEYS.INFO)) {
-            if (valueIR.type !== "Dictionary") throw new Error('infoSection value must be a dictionary');
-            infoSectionVal = valueIR.value;
+        if (keyBuf.equals(KEYS.INFO)) {
+            infoSectionPresent = true;
+            if (valueNode.type !== "DICT") throw new Error('infoSection value must be a dictionary');
+            infoSectionNode = valueNode;
+        } else if (keyBuf.equals(KEYS.ANNOUNCE_LIST)) {
+            if (valueNode.type !== 'LIST') throw new Error('announce-list value must be a List');
+            announceListNode = valueNode;
+        } else if (keyBuf.equals(KEYS.ANNOUNCE)) {
+            if (valueNode.type !== 'BYTE_STRING') throw new Error('announce value must be string');
+            announceNode = valueNode;
         }
-
-        if (keyBuffer.equals(KEYS.ANNOUNCE_LIST)) {
-            if (valueIR.type !== 'List') throw new Error('announce-list value must be a List');
-            announceListVal = { value: valueIR.value, type: 'List' };
-        }
-        if (keyBuffer.equals(KEYS.ANNOUNCE)) {
-            if (valueIR.type !== 'String') throw new Error('announce value must be string');
-            announceListVal = { value: valueIR.value, type: 'String' };
-        }
-
     }
 
-    const tiers = extractTiers(announceListVal);
-    const infoMetadata = extractInfoMeta(infoSectionVal);
+    if (!infoSectionPresent || !infoSectionNode) {
+        throw new Error('infoSection is not present in the .torrent file');
+    }
+
+    const primaryAnnounce = announceListNode || announceNode;
+    if (!primaryAnnounce) {
+        throw new Error('No tracker information found (missing announce and announce-list)');
+    }
+
+    const tiers = extractTiers(primaryAnnounce);
+    const infoMetadata = extractInfoMeta(infoSectionNode);
 
     return {
         announceList: tiers,
         ...infoMetadata
-    }
+    };
 }
 
-export function extractTiers(announceVal) {
-    let res = [];
-    const { value, type } = announceVal;
+export function extractTiers(announceNode) {
+    const res = [];
+    const { value, type } = announceNode;
 
-    // if announce key it contains a single string value
-    if (type === 'String') {
-        res.push(value.toString('utf-8'));
-        return [res];
+    // Single string fallback ('announce')
+    if (type === 'BYTE_STRING') {
+        res.push([value.toString('utf-8')]);
+        return res;
     }
 
-    // announce value contains tiers
-    const tiers = value;
-
-    // could use for each but normal loop seems much more understandable
-    for (const tier of tiers) {
+    // Multi-tier tracker list ('announce-list')
+    for (const tier of value) {
         const trackerList = [];
-        if (tier.type !== 'List') throw new Error("Tier must be lists");
+        if (tier.type !== 'LIST') throw new Error("Tier must be a list");
+
         for (const tracker of tier.value) {
-            if (tracker.type !== 'String') throw new Error(" Trackers must be string");
+            if (tracker.type !== 'BYTE_STRING') throw new Error("Trackers must be strings");
             trackerList.push(tracker.value.toString('utf-8'));
         }
-        res.push(trackerList);
+
+        if (trackerList.length > 0) res.push(trackerList);
     }
 
     return res;
 }
 
-export function extractInfoMeta(info) {
+export function extractInfoMeta(infoNode) {
     let name,
         pieceLength,
         lastPieceLength,
         pieceHashes,
         pieceCount,
         totalLength = 0,
-        multiFileIR,
-        singleFileIR;
+        multiFileNode,
+        singleFileNode;
 
+    for (const [keyNode, valueNode] of infoNode.value) {
+        if (keyNode.type !== 'BYTE_STRING') throw new Error('infoSection keys must be byte strings');
+        const keyBuf = keyNode.value;
 
-    for (const [keyBuff, valueIR] of info) {
-
-        if (keyBuff.equals(KEYS.PIECES)) pieceHashes = valueIR.value;
-        if (keyBuff.equals(KEYS.PIECE_LENGTH)) pieceLength = valueIR.value;
-        if (keyBuff.equals(KEYS.NAME)) name = valueIR.value.toString("utf-8");
-
-        if (keyBuff.equals(KEYS.FILES)) multiFileIR = valueIR;
-        if (keyBuff.equals(KEYS.LENGTH)) singleFileIR = valueIR;
+        if (keyBuf.equals(KEYS.PIECES)) {
+            if (valueNode.type !== 'BYTE_STRING') throw new Error('pieces must be a byte string');
+            pieceHashes = valueNode.value;
+        } else if (keyBuf.equals(KEYS.PIECE_LENGTH)) {
+            if (valueNode.type !== 'INTEGER') throw new Error('piece length must be an integer');
+            pieceLength = valueNode.value;
+        } else if (keyBuf.equals(KEYS.NAME)) {
+            if (valueNode.type !== 'BYTE_STRING') throw new Error('name must be a byte string');
+            name = valueNode.value.toString("utf-8");
+        } else if (keyBuf.equals(KEYS.FILES)) {
+            multiFileNode = valueNode; // Store Node reference
+        } else if (keyBuf.equals(KEYS.LENGTH)) {
+            singleFileNode = valueNode; // Store Node reference
+        }
     }
 
     if (
-        (!singleFileIR && !multiFileIR) ||
+        (!singleFileNode && !multiFileNode) ||
         (!name) ||
         (!Number.isInteger(pieceLength) || pieceLength <= 0) ||
         (!pieceHashes)
-    ) throw new Error('Invalid Torrent!');
+    ) {
+        throw new Error('Invalid Torrent: Missing required info metadata');
+    }
 
-    if (multiFileIR) {
-        if (multiFileIR.type !== 'List') throw new Error('files must be a List');
-        for (const file of multiFileIR.value) {
+    if (multiFileNode) {
+        if (multiFileNode.type !== 'LIST') throw new Error('files must be a List');
 
-            if (file.type !== 'Dictionary') throw new Error('file entry must be a Dictionary');
+        for (const fileNode of multiFileNode.value) {
+            if (fileNode.type !== 'DICT') throw new Error('file entry must be a Dictionary');
 
-            for (const [fileKey, fileValIR] of file.value) {
+            for (const [fileKeyNode, fileValNode] of fileNode.value) {
+                if (fileKeyNode.type !== 'BYTE_STRING') throw new Error("file key must be a byte string");
 
-                if (fileKey.equals(KEYS.LENGTH)) {
+                if (fileKeyNode.value.equals(KEYS.LENGTH)) {
+                    if (fileValNode.type !== 'INTEGER') throw new Error('file length must be an Integer');
+                    const val = fileValNode.value;
 
-                    if (fileValIR.type !== 'Integer') throw new Error('file length must be an Integer');
-                    if (Number.isInteger(fileValIR.value) && fileValIR.value > 0) totalLength += fileValIR.value;
-                    else throw new Error(' Malformed Torrent | Invalid Length');
+                    if (Number.isInteger(val) && val >= 0) {
+                        totalLength += val;
+                    } else {
+                        throw new Error('Malformed Torrent: Invalid negative file length');
+                    }
                 }
-
             }
         }
     } else {
-        if (singleFileIR.type !== 'Integer') throw new Error('length value must be an Integer');
-        totalLength += singleFileIR.value;
+        if (singleFileNode.type !== 'INTEGER') throw new Error('length value must be an Integer');
+        totalLength = singleFileNode.value;
     }
 
-    // since SHA1 hash is of 20 bytes so we can validate the torrent by checking if remainder is 0
-    if (pieceHashes.length % 20 !== 0 || pieceHashes.length === 0) throw new Error('Invalid piece Hash length | Malformed torrent');
+    if (pieceHashes.length === 0 || pieceHashes.length % 20 !== 0) {
+        throw new Error('Invalid piece Hash length: Must be non-zero multiple of 20');
+    }
+
     pieceCount = pieceHashes.length / 20;
+    const splitHashes = splitPieceHashes(pieceHashes);
 
-    pieceHashes = splitPieceHashes(pieceHashes);
-
-    // NOTE: usually the lastPieceLength caluculation is not stored instead a helper function is implemented to make it more easily accessible but for MVP we're storing it for now 
     lastPieceLength = (totalLength % pieceLength === 0) ? pieceLength : (totalLength % pieceLength);
-
 
     return {
         name,
         pieceLength,
         lastPieceLength,
-        pieceHashes,
+        pieceHashes: splitHashes,
         pieceCount,
         totalLength,
-        isMultiFile: Boolean(multiFileIR)
-    }
-
-
+        isMultiFile: Boolean(multiFileNode)
+    };
 }
 
 function splitPieceHashes(buf) {
@@ -154,5 +175,3 @@ function splitPieceHashes(buf) {
     }
     return piecesArr;
 }
-
-

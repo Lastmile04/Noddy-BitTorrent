@@ -2,7 +2,7 @@ import { percentEncode } from "./encode.js";
 import http from 'http';
 import https from 'https';
 import { Buffer } from 'buffer';
-import { decode } from "../codec/bencode.js";
+import { decode } from "../codec/parser.ts";
 import zlib from 'zlib';
 import { parseCompactPeers } from "../peers/peerParser.js";
 import { parseNonCompactPeers } from "../peers/peerParser.js";
@@ -17,9 +17,9 @@ export async function httpPeers(trackerUrl, paramsObj) {
     // validate raw buffer first, then decode
     validateBencode(buffer);
     const decoded = decode(buffer, 0);
-    if (decoded.value.type !== 'Dictionary') throw new Error('Response is not a dictionary');
+    if (decoded.type !== 'DICT') throw new Error('Response is not a dictionary');
 
-    return normalizeTracker(decoded.value.value);
+    return normalizeTracker(decoded.value);
 }
 
 

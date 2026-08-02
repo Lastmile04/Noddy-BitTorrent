@@ -1,8 +1,8 @@
 import fs from 'fs';
-import { validateBencode } from '../codec/validator.js';
+// import { validateBencode } from '../codec/validator.js';
 import { getInfoSection } from '../identity/InfoByte.js';
 import { computeSha1Hash } from '../identity/computeHash.js';
-import { decode } from '../codec/bencode.js';
+import { decode } from '../codec/parser.ts';
 import { torrentMetadataExtraction } from './torrent-metadata.js';
 
 export function parseTorrentFile(torrentPath) {
@@ -11,8 +11,8 @@ export function parseTorrentFile(torrentPath) {
         const buffer = fs.readFileSync(torrentPath);
 
         // Validate bencode structure
-        validateBencode(buffer);
-        console.log('📦 Torrent metadata validated');
+        // validateBencode(buffer);
+        // console.log('📦 Torrent metadata validated');
 
         // Extract info section
         const infoSection = getInfoSection(buffer);
@@ -24,9 +24,9 @@ export function parseTorrentFile(torrentPath) {
         const infoHash = computeSha1Hash(infoSection.raw);
         console.log('🔑 Info hash generated (hex)->', infoHash.toString('hex'));
 
-        const decodedIR = decode(buffer, 0).value;
+        const decoded = decode(buffer, 0);
 
-        const torrentMetadata = torrentMetadataExtraction(decodedIR);
+        const torrentMetadata = torrentMetadataExtraction(decoded);
         // const torrentAnnounceList = [['udp://tracker.opentrackr.org:1337', 'udp://tracker.openbittorrent.com:6969', 'udp://open.stealth.si:80']]
 
         // Return important values

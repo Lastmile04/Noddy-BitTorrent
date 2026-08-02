@@ -1,3 +1,8 @@
+//NOTE: Important parser rules:
+//- all type parser functions return a parseResult type object 
+//- nested results in type parser dict and list are nodes instead of parseResult object
+//- string and integer type parser function return the parseResult object if not called inside a nested function 
+
 import type {
     Node,
     ByteStringNode,
@@ -12,15 +17,15 @@ import { BencodeTokens, isAsciiDigit } from "./grammar.js";
 
 export function decode(buf: Buffer): Node {
     const offset = 0;
-    const decodedValue = parseNode(buf, offset);
-    if (decodedValue.nextOffset !== buf.length) {
+    const decodedObj= parseNode(buf, offset);
+    if (decodedObj.nextOffset !== buf.length) {
         throw new ParseError({
             code: 'TRAILING_DATA',
             message: 'Unparsed bytes remaining after the root value',
-            byteOffset: decodedValue.nextOffset,
+            byteOffset: decodedObj.nextOffset,
         });
     }
-    return decodedValue.node;
+    return decodedObj.node;
 }
 
 export function parseNode(buf: Buffer, offset: number): ParseResult<Node> {
