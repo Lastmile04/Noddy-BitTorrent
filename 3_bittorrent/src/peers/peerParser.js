@@ -148,7 +148,7 @@ export function parseCompactPeers(family, buffer) {
         default:
             break;
     }
-
+    console.log("PEERS: ", peers);
     return peers;
 
 }
@@ -195,6 +195,7 @@ export function parseNonCompactPeers(listIR) {
             peers.push({ ip: ipStr, port });
         }
     }
-    return peers;
 
+    console.log("PEERS: ", peers);
+    return peers;
 }

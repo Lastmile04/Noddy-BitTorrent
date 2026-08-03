@@ -388,3 +388,36 @@ node src/app/main.js
 This project was built for educational purposes to understand how the
 BitTorrent ecosystem works internally. Please use responsibly and only
 download/share content you legally have the right to access.
+
+---
+
+## Project Completion Roadmap
+
+v0.1
+ |
+ |-- AST/grammar cleanup
+ |
+v0.2
+ |
+ |-- Download all pieces
+ |-- Verify SHA1
+ |-- Write disk
+ |
+v0.3
+ |
+ |-- Multiple peer connections
+ |-- Concurrent requests
+ |
+v0.4
+ |
+ |-- Extract piece manager interface
+ |
+v0.5
+ |
+ |-- Rewrite piece manager as Go service
+ |
+v1.0
+ |
+ |-- Resume
+ |-- TUI
+ |-- Magnet links
