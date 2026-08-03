@@ -25,6 +25,7 @@ export function parseTorrentFile(torrentPath) {
         console.log('🔑 Info hash generated (hex)->', infoHash.toString('hex'));
 
         const decoded = decode(buffer, 0);
+        console.log(' DECODED_BUFFER:', decoded);
 
         const torrentMetadata = torrentMetadataExtraction(decoded);
         // const torrentAnnounceList = [['udp://tracker.opentrackr.org:1337', 'udp://tracker.openbittorrent.com:6969', 'udp://open.stealth.si:80']]
@@ -41,4 +42,3 @@ export function parseTorrentFile(torrentPath) {
         throw error; // Re-throw so caller can handle
     }
 }
-

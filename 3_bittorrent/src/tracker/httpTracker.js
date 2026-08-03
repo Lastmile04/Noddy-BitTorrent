@@ -1,4 +1,4 @@
-import { percentEncode } from "./encode.js";
+import { percentEncode } from './encode.js';
 import http from 'http';
 import https from 'https';
 import { Buffer } from 'buffer';
@@ -6,19 +6,20 @@ import { decode } from "../codec/parser.ts";
 import zlib from 'zlib';
 import { parseCompactPeers } from "../peers/peerParser.js";
 import { parseNonCompactPeers } from "../peers/peerParser.js";
-import { validateBencode } from "../codec/validator.js";
+//import { validateBencode } from "../codec/validator.js";
 
-// decode from bencode.js
+// decode from parser.ts
 export async function httpPeers(trackerUrl, paramsObj) {
 
     const url = buildAnnounce(trackerUrl, paramsObj);
-    const buffer = await fetchTracker(url);
+    console.log("HTTP_ANNOUNCE_URL: ", url);
+    const buf = await fetchTracker(url);
+    console.log('TRACKER_BUF: ', buf);
 
-    // validate raw buffer first, then decode
-    validateBencode(buffer);
-    const decoded = decode(buffer, 0);
+    //validateBencode(buffer);
+    const decoded = decode(buf, 0);
+    console.log("DECODED_TRACKER: ", decoded);
     if (decoded.type !== 'DICT') throw new Error('Response is not a dictionary');
-
     return normalizeTracker(decoded.value);
 }
 
@@ -26,20 +27,19 @@ export async function httpPeers(trackerUrl, paramsObj) {
 function buildAnnounce(baseUrl, urlObj) {
     let params = [];
 
-    params.push(percentEncode(urlObj.infoHash));
-    params.push(percentEncode(urlObj.peerId));
-    params.push(urlObj.port);
-    params.push(urlObj.uploaded ?? 0);
-    params.push(urlObj.downloaded ?? 0);
-    params.push(urlObj.left);
-    params.push(1);
-    params.push(urlObj.numwant ?? 50);
+    params.push(`info_hash=${percentEncode(urlObj.infoHash)}`);
+    params.push(`peer_id=${percentEncode(urlObj.peerId)}`);
+    params.push(`port=${urlObj.port}`);
+    params.push(`uploaded=${urlObj.uploaded ?? 0}`);
+    params.push(`downloaded=${urlObj.downloaded ?? 0}`);
+    params.push(`left=${urlObj.left}`);
+    params.push(`compact=1`);
+    params.push(`numwant=${urlObj.numwant ?? 50}`);
 
     if (urlObj.event) params.push(urlObj.event);
     const separator = baseUrl.includes('?') ? '&' : '?';
     return `${baseUrl}${separator}${params.join('&')}`;
 }
-
 
 async function fetchTracker(url) {
     return new Promise((resolve, reject) => {
@@ -75,7 +75,7 @@ async function fetchTracker(url) {
                             return;
                         }
                     }
-
+                    console.log("FINAL_BUF: ", finalBuffer);
                     resolve(finalBuffer);  // Always resolves the right buffer
                 });
 
@@ -92,7 +92,6 @@ async function fetchTracker(url) {
 }
 
 
-
 function normalizeTracker(response) {
 
     // Phase 2: Extract fields
@@ -103,11 +102,11 @@ function normalizeTracker(response) {
     let seeders = 0;
     let leechers = 0;
 
-    for (const [keyBuffer, valueIR] of response) {
-
-        const key = keyBuffer.toString('utf8');
-        const type = valueIR.type;
-        const value = valueIR.value;
+    for (const [keyNode, valueNode] of response) {
+        if (keyNode.type !== 'BYTE_STRING') throw new Error("tracker response key is not a byte string");
+        const key = keyNode.value.toString('utf8');
+        const type = valueNode.type;
+        const value = valueNode.value;
 
         switch (key) {
             // phase 1: throw error first thing after checking for failure reason key
@@ -115,29 +114,29 @@ function normalizeTracker(response) {
                 throw new Error(`Tracker failure: ${value.toString('utf-8')}`);  // ← first case, throws immediately
 
             case 'interval':
-                if (type !== 'Integer') throw new Error('interval must be Integer');
+                if (type !== 'INTEGER') throw new Error('interval must be Integer');
                 interval = value;
                 break;
 
             case 'peers':
 
-                if (type !== 'String' && type !== 'List') throw new Error(`Malformed peers do not match correct type:${type}`);
-                if (type === 'String') compact4 = value; // compact IPv4
-                if (type === 'List') nonCompact = value; // non-compact contains both IPv4 and IPv6
+                if (type !== 'BYTE_STRING' && type !== 'LIST') throw new Error(`Malformed peers do not match correct type:${type}`);
+                if (type === 'BYTE_STRING') compact4 = value; // compact IPv4
+                if (type === 'LIST') nonCompact = value; // non-compact contains both IPv4 and IPv6
                 break;
 
             case 'peers6':
-                if (type !== 'String') throw new Error(`Malformed peers do not match correct type:${valueIR.value}`);
+                if (type !== 'BYTE_STRING') throw new Error(`Malformed peers do not match correct type:${value}`);
                 else compact6 = value; // compact IPv6
                 break;
 
             case 'complete':
-                if (type !== 'Integer') throw new Error('complete must be Integer');
+                if (type !== 'INTEGER') throw new Error('complete must be Integer');
                 seeders = value;
                 break;
 
             case 'incomplete':
-                if (type !== 'Integer') throw new Error('incomplete must be Integer');
+                if (type !== 'INTEGER') throw new Error('incomplete must be Integer');
                 leechers = value;
                 break;
 
@@ -154,7 +153,10 @@ function normalizeTracker(response) {
     if (compact6 && compact6.length > 0) peers.push(...parseCompactPeers(6, compact6));
     if (nonCompact && nonCompact.length > 0) peers.push(...parseNonCompactPeers(nonCompact));
 
+    console.log("INTERVAL: ", interval);
+    console.log("SEEDERS: ", seeders);
+    console.log("LEECHERS: ", leechers);
+    console.log("PEERS: ", peers);
 
     return { interval, seeders, leechers, peers, peerNum: peers.length }
 }
-

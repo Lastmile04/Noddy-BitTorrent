@@ -17,7 +17,7 @@ import { BencodeTokens, isAsciiDigit } from "./grammar.js";
 
 export function decode(buf: Buffer): Node {
     const offset = 0;
-    const decodedObj= parseNode(buf, offset);
+    const decodedObj = parseNode(buf, offset);
     if (decodedObj.nextOffset !== buf.length) {
         throw new ParseError({
             code: 'TRAILING_DATA',
@@ -269,5 +269,3 @@ export function parseString(buf: Buffer, offset: number): ParseResult<ByteString
         nextOffset: payloadEnd,
     };
 }
-
-

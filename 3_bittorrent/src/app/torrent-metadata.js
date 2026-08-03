@@ -50,6 +50,7 @@ export function torrentMetadataExtraction(decodedNode) {
 
     const tiers = extractTiers(primaryAnnounce);
     const infoMetadata = extractInfoMeta(infoSectionNode);
+    console.log("TIERS:", tiers);
 
     return {
         announceList: tiers,
