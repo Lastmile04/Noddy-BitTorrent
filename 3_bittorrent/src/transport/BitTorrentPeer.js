@@ -12,13 +12,13 @@ export class BitTorrentPeer extends EventEmitter {
         this.timeout = timeout;
         this.peer = peer;
         this.protocolStr = protocolStr;
-        this.pieceCount = torrentMeta.pieceCount;
+        this.pieceCount = torrentMeta.pieceCount; // not needed  
         this.pieceLength = torrentMeta.pieceLength;
-        this.pieceHashes = torrentMeta.pieceHashes;
-        this.lastPieceLength = torrentMeta.lastPieceLength;
+        this.pieceHashes = torrentMeta.pieceHashes; // not needed 
+        this.lastPieceLength = torrentMeta.lastPieceLength; // not needed
         this.totalLength = torrentMeta.totalLength;
-        this.targetPieceIdx = null;
-        this.downloadedBytes = 0;
+        this.targetPieceIdx = null; //not needed
+        this.downloadedBytes = 0; // not needed
         this.nextRequestOffset = 0;
 
 
@@ -103,7 +103,7 @@ export class BitTorrentPeer extends EventEmitter {
         });
     }
 
-    // attack listeners inside one function
+    // attach listeners inside one function
     attachTransportHandlers() {
 
         this.socket.on('data', this.handleData);

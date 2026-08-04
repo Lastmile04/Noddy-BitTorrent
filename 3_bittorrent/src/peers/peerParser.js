@@ -148,7 +148,6 @@ export function parseCompactPeers(family, buffer) {
         default:
             break;
     }
-    console.log("PEERS: ", peers);
     return peers;
 
 }
@@ -175,19 +174,20 @@ export function parseCompactPeers(family, buffer) {
   ]
 }
  */
-export function parseNonCompactPeers(listIR) {
+export function parseNonCompactPeers(listNode) {
     let peers = [];
 
-    for (const peerDict of listIR.value) {
+    for (const peerDict of listNode.value) {
         let ipStr = null;
         let port = null;
 
-        for (const [key, value] of peerDict.value) {
-            const keyStr = key.toString('utf-8');
-            if (keyStr === 'ip' && value.type === 'String') {
-                ipStr = value.value.toString('utf-8');
-            } else if (keyStr === 'port' && value.type === 'Integer') {
-                port = value.value;
+        for (const [keyNode, valueNode] of peerDict.value) {
+            if(keyNode.type !== 'BYTE_STRING') throw new Error(' received non-compact peers do not have string as dict key'); 
+            const keyStr = keyNode.value.toString('utf-8');
+            if (keyStr === 'ip' && valueNode.type === 'BYTE_STRING') {
+                ipStr = valueNode.value.toString('utf-8');
+            } else if (keyStr === 'port' && valueNode.type === 'INTEGER') {
+                port = valueNode.value;
             }
         }
 
@@ -195,7 +195,6 @@ export function parseNonCompactPeers(listIR) {
             peers.push({ ip: ipStr, port });
         }
     }
-
-    console.log("PEERS: ", peers);
+ 
     return peers;
 }

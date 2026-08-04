@@ -46,5 +46,5 @@ export async function urlDispatcher(announceList, params) {
             }
         }
     }
-    return { peers: [] }
+    return { peers: [], peerStats }
 }

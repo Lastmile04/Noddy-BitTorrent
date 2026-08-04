@@ -6,20 +6,10 @@ import { createClient } from './client.js';
 import { generatePeerId } from '../identity/peerId.js';
 import { parseTorrentFile } from './torrent-loader.js';
 import { urlDispatcher } from '../tracker/urlDispatcher.js';
+import { downloadManager } from '../download/DownloadManger.js';
+import { TrackerParams } from './types.js'; 
+
 //import type { TorrentMetadata } from '../codec/ast.js'; // Use your extracted TorrentMetadata interface
-
-// Local interface for the tracker params shape
-export interface TrackerParams {
-    infoHash: Buffer;
-    peerId: Buffer;
-    port: number;
-    uploaded: number;
-    downloaded: number;
-    left: number;
-    numwant: number;
-    event: 'started' | 'stopped' | 'completed';
-}
-
 const port = 4000;
 
 const __filename = fileURLToPath(import.meta.url);
@@ -53,7 +43,8 @@ const result = await urlDispatcher(torrentMeta.announceList, trackerParams);
 
 console.log('🌐 Tracker connected');
 console.log(`👥 Peers discovered: ${result.peers.length}`);
-console.log(`⏱ Announce interval: ${result.peers.interval}`);
+console.log(`⏱ Announce interval: ${result.peerStats.interval}`);
 
 const peerList = result.peers;
-const handshake = await createClient(peerList, peerId, torrentMeta);
+await createClient(peerList, peerId, torrentMeta);
+await downloadManager({ peerList, peerId, torrentMeta });
