@@ -12,13 +12,10 @@ import { parseNonCompactPeers } from "../peers/peerParser.js";
 export async function httpPeers(trackerUrl, paramsObj) {
 
     const url = buildAnnounce(trackerUrl, paramsObj);
-    console.log("HTTP_ANNOUNCE_URL: ", url);
     const buf = await fetchTracker(url);
-    console.log('TRACKER_BUF: ', buf);
 
     //validateBencode(buffer);
     const decoded = decode(buf, 0);
-    console.log("DECODED_TRACKER: ", decoded);
     if (decoded.type !== 'DICT') throw new Error('Response is not a dictionary');
     return normalizeTracker(decoded.value);
 }
@@ -75,7 +72,6 @@ async function fetchTracker(url) {
                             return;
                         }
                     }
-                    console.log("FINAL_BUF: ", finalBuffer);
                     resolve(finalBuffer);  // Always resolves the right buffer
                 });
 
@@ -152,11 +148,6 @@ function normalizeTracker(response) {
     if (compact4 && compact4.length > 0) peers.push(...parseCompactPeers(4, compact4));
     if (compact6 && compact6.length > 0) peers.push(...parseCompactPeers(6, compact6));
     if (nonCompact && nonCompact.length > 0) peers.push(...parseNonCompactPeers(nonCompact));
-
-    console.log("INTERVAL: ", interval);
-    console.log("SEEDERS: ", seeders);
-    console.log("LEECHERS: ", leechers);
-    console.log("PEERS: ", peers);
 
     return { interval, seeders, leechers, peers, peerNum: peers.length }
 }
