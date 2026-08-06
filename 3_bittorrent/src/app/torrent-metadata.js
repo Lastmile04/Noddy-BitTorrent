@@ -50,7 +50,6 @@ export function torrentMetadataExtraction(decodedNode) {
 
     const tiers = extractTiers(primaryAnnounce);
     const infoMetadata = extractInfoMeta(infoSectionNode);
-    console.log("TIERS:", tiers);
 
     return {
         announceList: tiers,
@@ -129,12 +128,12 @@ export function extractInfoMeta(infoNode) {
         for (const fileNode of multiFileNode.value) {
             if (fileNode.type !== 'DICT') throw new Error('file entry must be a Dictionary');
 
-            for (const [fileKeyNode, fileValNode] of fileNode.value) {
+            for (const [fileKeyNode, fileNodeVal] of fileNode.value) {
                 if (fileKeyNode.type !== 'BYTE_STRING') throw new Error("file key must be a byte string");
 
                 if (fileKeyNode.value.equals(KEYS.LENGTH)) {
-                    if (fileValNode.type !== 'INTEGER') throw new Error('file length must be an Integer');
-                    const val = fileValNode.value;
+                    if (fileNodeVal.type !== 'INTEGER') throw new Error('file length must be an Integer');
+                    const val = fileNodeVal.value;
 
                     if (Number.isInteger(val) && val >= 0) {
                         totalLength += val;

@@ -2,12 +2,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Standard ES module resolution for JS imports
-import { createClient } from './client.js';
 import { generatePeerId } from '../identity/peerId.js';
 import { parseTorrentFile } from './torrent-loader.js';
 import { urlDispatcher } from '../tracker/urlDispatcher.js';
-import { downloadManager } from '../download/DownloadManger.js';
-import { TrackerParams } from './types.js'; 
+import { TrackerParams } from './types.js';
+import { DownloadManager } from '../download/DownloadManager.js';
 
 //import type { TorrentMetadata } from '../codec/ast.js'; // Use your extracted TorrentMetadata interface
 const port = 4000;
@@ -46,5 +45,5 @@ console.log(`👥 Peers discovered: ${result.peers.length}`);
 console.log(`⏱ Announce interval: ${result.peerStats.interval}`);
 
 const peerList = result.peers;
-await createClient(peerList, peerId, torrentMeta);
-await downloadManager({ peerList, peerId, torrentMeta });
+// await createClient(peerList, peerId, torrentMeta);
+const download = new DownloadManager({ peerList, peerId, torrentMeta });

@@ -3,9 +3,10 @@ export interface TorrentMeta {
     name: string;
     pieceLength: number;
     lastPieceLength: number;
+    pieceHashes: Buffer[];
     pieceCount: number;
     totalLength: number;
-    isMultifile: boolean;
+    isMultiFile: boolean;
     announceList: string[][]
 }
 

@@ -13,22 +13,20 @@ export interface PieceManagerConfig {
     totalLength: number
     isMultiFile: boolean
     pieceCount: number
+    lastPieceLength: number
 }
 
 export interface DownloadSession {
-    torrentName: string
-    totalLength: number
+    torrentName: string;
+    totalLength: number;
 
-    totalPeers: number
-    connectedPeers: number
-    failedPeers: number
-    activePeers: number
+    totalPeers: number;
+    connectedPeers: number;
+    failedPeers: number;
+    activePeers: number;
 
-    downloadedBytes: number
-    completedBytes: number
+    downloadedBytes: number;
+    completedBytes: number;
 
-    status: "idle" | "downloading" | "completed" | "failed"
+    status: "idle" | "downloading" | "completed" | "failed";
 }
-
-
-
