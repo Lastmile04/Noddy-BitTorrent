@@ -52,7 +52,5 @@ export class DownloadManager extends EventEmitter {
 
         this.pieceManager = new PieceManager(pieceData);
     }
+}
 
-    start() {
-
-    }
