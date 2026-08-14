@@ -2,6 +2,7 @@ import EventEmitter from "node:events";
 import * as net from 'net';
 import { PeerConfig, PeerState } from "./types.js";
 import { BT_PROTOCOL_LEN, BT_PROTOCOL_BUFFER, BT_PROTOCOL_STR } from "./types.js";
+import { resourceLimits } from "node:worker_threads";
 
 export class BitTorrentPeer extends EventEmitter {
 
@@ -118,11 +119,67 @@ export class BitTorrentPeer extends EventEmitter {
                     return;
                 }
             } else {
+                if (this.bufferedBytes < 4) break;
 
+                const messageLength = this.peekUInt32BE();
+                const totalMsgLen = 4 + messageLength;
+
+                if (this.bufferedBytes < totalMsgLen) break;
+
+                const msgBuf = this.consumeBytes(totalMsgLen);
+                this.handlePeerMessage(msgBuf);
             }
         }
     }
 
+    // helper function for onData
+    private peekUInt32BE(): number {
+        if (this.bufQueue[0].length >= 4) {
+            return this.bufQueue[0].readUInt32BE(0);
+        }
+        // If the 4-byte length prefix spans across multiple chunks, combine just enough bytes
+        const tempHeader = this.peekBytes(4);
+        return tempHeader.readUInt32BE(0);
+    }
+
+    private peekBytes(count: number): Buffer {
+        let remaining = count;
+        const res: Buffer[] = [];
+
+        for (const chunk of this.bufQueue) {
+            if (chunk.length >= remaining) {
+                res.push(chunk.subarray(0, remaining));
+                break;
+            }
+            res.push(chunk);
+            remaining -= chunk.length;
+        }
+        return Buffer.concat(res);
+    }
+
+    private consumeBytes(count: number): Buffer {
+        const res: Buffer[] = [];
+        let fetched = 0;
+
+        while (this.bufQueue.length > 0 && fetched < count) {
+            const head = this.bufQueue[0];
+            const needed = count - fetched;
+
+            if (head.length <= needed) {
+                res.push(this.bufQueue.shift()!);
+                fetched += head.length;
+            } else {
+                res.push(head.subarray(0, needed));
+                this.bufQueue[0] = head.subarray(needed);
+                fetched += needed;
+            }
+        }
+        this.bufferedBytes -= count;
+        return res.length === 1 ? res[0] : Buffer.concat(res);
+    }
+
+    private parseHandshake(buf: Buffer) { }
+    private handlePeerMessage(msgBuf: Buffer) { }
     private onEnd(): void {
         // Handle stream end
     }
@@ -149,4 +206,3 @@ export class BitTorrentPeer extends EventEmitter {
         this.socket.destroy();
         this.reject(err);
     }
-}
