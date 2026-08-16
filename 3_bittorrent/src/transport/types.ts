@@ -27,6 +27,25 @@ export interface PeerState {
     downloadRate: number;
 }
 
+export interface HandshakeResult {
+    bytesConsumed: number;    // How many bytes to slice off the buffer queue (68 for standard)
+    pstr: string;             // Protocol string name
+    reserved: Buffer;         // 8-byte extension support flags (BEP 10 extension protocol, DHT, etc.)
+    infoHash: Buffer;         // 20-byte Torrent InfoHash
+    peerId: Buffer;           // 20-byte Remote Peer ID
+}
+
+export interface PeerMessage {
+    type: string;
+    id?: number;
+    pieceIndex?: number;
+    bitfield?: Buffer;
+    index?: number;
+    begin?: number;
+    length?: number;
+    block?: Buffer;
+}
+
 // protocols.ts - Extracted configuration and constraints
 export const BT_PROTOCOL_LEN = 19;
 export const BT_PROTOCOL_STR = "BitTorrent protocol" as const;
