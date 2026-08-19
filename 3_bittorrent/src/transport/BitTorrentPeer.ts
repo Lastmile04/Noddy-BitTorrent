@@ -329,7 +329,7 @@ export class BitTorrentPeer extends EventEmitter {
             case "REQUEST":
                 this.emit("request", {
                     index: msgObj.index,
-                    beign: msgObj.begin,
+                    begin: msgObj.begin,
                     length: msgObj.length,
                 });
                 this.lastPeerActive = Date.now();
@@ -338,7 +338,7 @@ export class BitTorrentPeer extends EventEmitter {
             case "CANCEL":
                 this.emit("cancel", {
                     index: msgObj.index,
-                    beign: msgObj.begin,
+                    begin: msgObj.begin,
                     length: msgObj.length,
                 });
                 this.lastPeerActive = Date.now();
