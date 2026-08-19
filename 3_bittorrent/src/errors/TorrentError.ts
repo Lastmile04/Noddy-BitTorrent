@@ -54,7 +54,7 @@ export const ErrorFactory = {
     },
 
     normalize: (err: unknown): TorrentError => {
-        if (err instanceof TorrentError) return err;
+        if (err instanceof TorrentError) return err; // for prototype chaining
 
         const message = err instanceof Error ? err.message : 'Unknown fatal error';
 

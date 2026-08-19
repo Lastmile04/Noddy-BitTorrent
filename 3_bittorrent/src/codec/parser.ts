@@ -1,4 +1,4 @@
-//NOTE: Important parser rules:
+// NOTE: Important parser rules:
 //- all type parser functions return a parseResult type object 
 //- nested results in type parser dict and list are nodes instead of parseResult object
 //- string and integer type parser function return the parseResult object if not called inside a nested function 
@@ -12,29 +12,29 @@ import type {
     ParseResult
 } from "./ast.js";
 
-import { ParseError } from "./errors.js";
+import { ErrorFactory } from "../errors/TorrentError.js";
 import { BencodeTokens, isAsciiDigit } from "./grammar.js";
 
 export function decode(buf: Buffer): Node {
     const offset = 0;
     const decodedObj = parseNode(buf, offset);
     if (decodedObj.nextOffset !== buf.length) {
-        throw new ParseError({
-            code: 'TRAILING_DATA',
-            message: 'Unparsed bytes remaining after the root value',
-            byteOffset: decodedObj.nextOffset,
-        });
+        throw ErrorFactory.codec(
+            'TRAILING_DATA',
+            'Unparsed bytes remaining after the root value',
+            { byteOffset: decodedObj.nextOffset }
+        );
     }
     return decodedObj.node;
 }
 
 export function parseNode(buf: Buffer, offset: number): ParseResult<Node> {
     if (offset >= buf.length) {
-        throw new ParseError({
-            code: 'UNEXPECTED_EOF',
-            message: 'Unexpected end of buffer while expecting a value',
-            byteOffset: offset,
-        });
+        throw ErrorFactory.codec(
+            'UNEXPECTED_EOF',
+            'Unexpected end of buffer while expecting a value',
+            { byteOffset: offset }
+        );
     }
 
     const peek = buf[offset];
@@ -47,18 +47,18 @@ export function parseNode(buf: Buffer, offset: number): ParseResult<Node> {
         case BencodeTokens.INTEGER_START:
             return parseInteger(buf, offset);
         case BencodeTokens.END_MARKER:
-            throw new ParseError({
-                code: 'INVALID_TOKEN',
-                message: 'Unexpected END_MARKER ("e") where a value was expected',
-                byteOffset: offset,
-            });
+            throw ErrorFactory.codec(
+                'INVALID_TOKEN',
+                'Unexpected END_MARKER ("e") where a value was expected',
+                { byteOffset: offset }
+            );
         default:
             if (isAsciiDigit(peek)) return parseString(buf, offset);
-            throw new ParseError({
-                code: 'INVALID_TOKEN',
-                message: `Invalid token byte: 0x${peek.toString(16)}`,
-                byteOffset: offset,
-            });
+            throw ErrorFactory.codec(
+                'INVALID_TOKEN',
+                `Invalid token byte: 0x${peek.toString(16)}`,
+                { byteOffset: offset }
+            );
     }
 }
 
@@ -85,19 +85,19 @@ export function parseDict(buf: Buffer, offset: number): ParseResult<DictNode> {
 
             pairs.push([keyResult.node, valueResult.node]);
         } else {
-            throw new ParseError({
-                code: 'INVALID_TOKEN',
-                message: `Dictionary keys must be strings, found 0x${byte.toString(16)}`,
-                byteOffset: i,
-            });
+            throw ErrorFactory.codec(
+                'INVALID_TOKEN',
+                `Dictionary keys must be strings, found 0x${byte.toString(16)}`,
+                { byteOffset: i }
+            );
         }
     }
 
-    throw new ParseError({
-        code: 'UNEXPECTED_EOF',
-        message: 'Unterminated dictionary: missing closing "e" marker',
-        byteOffset: offset,
-    });
+    throw ErrorFactory.codec(
+        'UNEXPECTED_EOF',
+        'Unterminated dictionary: missing closing "e" marker',
+        { byteOffset: offset }
+    );
 }
 
 export function parseList(buf: Buffer, offset: number): ParseResult<ListNode> {
@@ -119,11 +119,11 @@ export function parseList(buf: Buffer, offset: number): ParseResult<ListNode> {
         i = itemResult.nextOffset;
     }
 
-    throw new ParseError({
-        code: 'UNEXPECTED_EOF',
-        message: 'Unterminated list: missing closing "e" marker',
-        byteOffset: offset,
-    });
+    throw ErrorFactory.codec(
+        'UNEXPECTED_EOF',
+        'Unterminated list: missing closing "e" marker',
+        { byteOffset: offset }
+    );
 }
 
 export function parseInteger(buf: Buffer, offset: number): ParseResult<IntegerNode> {
@@ -131,11 +131,11 @@ export function parseInteger(buf: Buffer, offset: number): ParseResult<IntegerNo
     let sign = 1;
 
     if (i >= buf.length) {
-        throw new ParseError({
-            code: 'UNEXPECTED_EOF',
-            message: 'Unterminated integer payload',
-            byteOffset: offset,
-        });
+        throw ErrorFactory.codec(
+            'UNEXPECTED_EOF',
+            'Unterminated integer payload',
+            { byteOffset: offset }
+        );
     }
 
     // Handle negative sign
@@ -154,29 +154,29 @@ export function parseInteger(buf: Buffer, offset: number): ParseResult<IntegerNo
             const digitLength = i - startDigits;
 
             if (digitLength === 0) {
-                throw new ParseError({
-                    code: 'INVALID_INTEGER',
-                    message: 'Empty integer expression "i-e" or "ie"',
-                    byteOffset: offset,
-                });
+                throw ErrorFactory.codec(
+                    'INVALID_INTEGER',
+                    'Empty integer expression "i-e" or "ie"',
+                    { byteOffset: offset }
+                );
             }
 
             // Check for leading zero: e.g., i03e or i-0e
             if (digitLength > 1 && buf[startDigits] === BencodeTokens.ASCII_ZERO) {
-                throw new ParseError({
-                    code: 'INVALID_INTEGER',
-                    message: 'Bencode violation: Leading zeros are forbidden',
-                    byteOffset: startDigits,
-                });
+                throw ErrorFactory.codec(
+                    'INVALID_INTEGER',
+                    'Bencode violation: Leading zeros are forbidden',
+                    { byteOffset: startDigits }
+                );
             }
 
             // Check for negative zero: i-0e
             if (sign === -1 && integer === 0) {
-                throw new ParseError({
-                    code: 'INVALID_INTEGER',
-                    message: 'Bencode violation: Negative zero "-0" is forbidden',
-                    byteOffset: offset,
-                });
+                throw ErrorFactory.codec(
+                    'INVALID_INTEGER',
+                    'Bencode violation: Negative zero "-0" is forbidden',
+                    { byteOffset: offset }
+                );
             }
 
             return {
@@ -186,11 +186,11 @@ export function parseInteger(buf: Buffer, offset: number): ParseResult<IntegerNo
         }
 
         if (!isAsciiDigit(byte)) {
-            throw new ParseError({
-                code: 'INVALID_INTEGER',
-                message: `Invalid character in integer: '${String.fromCharCode(byte)}'`,
-                byteOffset: i,
-            });
+            throw ErrorFactory.codec(
+                'INVALID_INTEGER',
+                `Invalid character in integer: '${String.fromCharCode(byte)}'`,
+                { byteOffset: i }
+            );
         }
 
         const digit = byte - BencodeTokens.ASCII_ZERO;
@@ -198,11 +198,11 @@ export function parseInteger(buf: Buffer, offset: number): ParseResult<IntegerNo
         i++;
     }
 
-    throw new ParseError({
-        code: 'UNEXPECTED_EOF',
-        message: 'Unterminated integer: missing closing "e" marker',
-        byteOffset: offset,
-    });
+    throw ErrorFactory.codec(
+        'UNEXPECTED_EOF',
+        'Unterminated integer: missing closing "e" marker',
+        { byteOffset: offset }
+    );
 }
 
 export function parseString(buf: Buffer, offset: number): ParseResult<ByteStringNode> {
@@ -220,29 +220,29 @@ export function parseString(buf: Buffer, offset: number): ParseResult<ByteString
     const digitCount = i - startOffset;
 
     if (digitCount === 0) {
-        throw new ParseError({
-            code: 'INVALID_TOKEN',
-            message: 'Expected string length digit',
-            byteOffset: i,
-        });
+        throw ErrorFactory.codec(
+            'INVALID_TOKEN',
+            'Expected string length digit',
+            { byteOffset: i }
+        );
     }
 
     // Check for leading zeros in length prefix (e.g. "04:spam")
     if (digitCount > 1 && buf[startOffset] === BencodeTokens.ASCII_ZERO) {
-        throw new ParseError({
-            code: 'INVALID_TOKEN',
-            message: 'Bencode violation: Leading zeros in string length prefix',
-            byteOffset: startOffset,
-        });
+        throw ErrorFactory.codec(
+            'INVALID_TOKEN',
+            'Bencode violation: Leading zeros in string length prefix',
+            { byteOffset: startOffset }
+        );
     }
 
     // Validate string delimiter ':' (0x3A)
     if (i >= buf.length || buf[i] !== BencodeTokens.STRING_DELIMITER) {
-        throw new ParseError({
-            code: 'INVALID_TOKEN',
-            message: 'Missing ":" delimiter after string length prefix',
-            byteOffset: i,
-        });
+        throw ErrorFactory.codec(
+            'INVALID_TOKEN',
+            'Missing ":" delimiter after string length prefix',
+            { byteOffset: i }
+        );
     }
 
     i++; // Skip delimiter ':'
@@ -251,11 +251,11 @@ export function parseString(buf: Buffer, offset: number): ParseResult<ByteString
 
     // Verify buffer has enough bytes for payload
     if (payloadEnd > buf.length) {
-        throw new ParseError({
-            code: 'UNEXPECTED_EOF',
-            message: `String payload truncated: expected ${len} bytes but only ${buf.length - payloadStart} remain`,
-            byteOffset: payloadStart,
-        });
+        throw ErrorFactory.codec(
+            'UNEXPECTED_EOF',
+            `String payload truncated: expected ${len} bytes but only ${buf.length - payloadStart} remain`,
+            { byteOffset: payloadStart }
+        );
     }
 
     // Zero-allocation buffer view using subarray
