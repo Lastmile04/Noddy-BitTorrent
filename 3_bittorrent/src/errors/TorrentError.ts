@@ -1,4 +1,6 @@
-import { AppErrorCode, BaseErrorOpts, CodecErrorCode, NetworkErrorCode, TrackerErrorCode } from "./types.js";
+import { Socket } from "node:dgram";
+import { AppErrorCode, BaseErrorOpts, CodecErrorCode, NetworkErrorCode, SocketErrorCode, TrackerErrorCode } from "./types.js";
+import { domainToASCII } from "node:url";
 
 class TorrentError extends Error {
     override readonly name = 'TorrentError';
@@ -47,6 +49,15 @@ export const ErrorFactory = {
     tracker: (code: TrackerErrorCode, message: string, context?: Record<string, unknown>) => {
         return new TorrentError({
             domain: 'TRACKER',
+            code,
+            message,
+            context
+        });
+    },
+
+    socket: (code: SocketErrorCode, message: string, context?: Record<string, unknown>) => {
+        return new TorrentError({
+            domain: 'SOCKET',
             code,
             message,
             context

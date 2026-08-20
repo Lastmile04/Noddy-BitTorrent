@@ -1,6 +1,10 @@
 import EventEmitter from "node:events";
 import * as net from 'net';
 import { HandshakeResult, PeerConfig, PeerState, BT_PROTOCOL_LEN, BT_PROTOCOL_BUFFER, BT_PROTOCOL_STR, PeerMessage } from "./types.js";
+import { ErrorFactory } from "../errors/TorrentError.js";
+import { trace } from "node:console";
+import { truncate } from "node:fs";
+import { SocketErrorCode } from "../errors/types.js";
 
 export class BitTorrentPeer extends EventEmitter {
 
@@ -16,6 +20,7 @@ export class BitTorrentPeer extends EventEmitter {
     bufQueue: Buffer[]
     bufferedBytes: number
     lastPeerActive?: number
+    handledFailure: boolean
 
     constructor({ socket, peer, peerId, infoHash, pieceLength, totalLength }: PeerConfig) {
         super();
@@ -30,6 +35,7 @@ export class BitTorrentPeer extends EventEmitter {
         this.bufQueue = [];
         this.bufferedBytes = 0;
         this.lastPeerActive = undefined;
+        this.handledFailure = false;
 
         this.remotePeerState = {
             ip: peer.ip,
@@ -98,7 +104,16 @@ export class BitTorrentPeer extends EventEmitter {
 
                 const receivedPstrLen = this.bufQueue[0][0];
                 if (receivedPstrLen !== BT_PROTOCOL_LEN) {
-                    //this.fail(new Error("Invalid protocol length"));
+                    this.fail(
+                        ErrorFactory.network(
+                            'PROTOCOL_VIOLATION',
+                            'Invalid protocol length',
+                            {
+                                originalLength: BT_PROTOCOL_LEN,
+                                receivedPstrLen: receivedPstrLen
+                            }
+                        ),
+                    )
                     return;
                 }
 
@@ -115,8 +130,7 @@ export class BitTorrentPeer extends EventEmitter {
                     this.emit("HANDSHAKE_SUCCESS", parsed);
 
                 } catch (err) {
-                    //this.fail(err);
-                    return;
+                    this.fail(ErrorFactory.normalize(err));
                 }
             } else {
                 if (this.bufferedBytes < 4) break;
@@ -127,7 +141,6 @@ export class BitTorrentPeer extends EventEmitter {
                 if (this.bufferedBytes < totalMsgLen) break;
 
                 let msgBuf = this.consumeBytes(totalMsgLen).subarray(4);
-                // const msgData = { len: msgBuf.readUInt32BE(0), payload: msgBuf.subarray(4) }; 
 
                 const msgObj = this.parseMsg(msgBuf);
                 this.handlePeerMessage(msgObj);
@@ -189,12 +202,30 @@ export class BitTorrentPeer extends EventEmitter {
         const receivedPstrLen = buf[0];
 
         if (receivedPstrLen !== BT_PROTOCOL_LEN) {
-            //err
+            this.fail(
+                ErrorFactory.network(
+                    'PROTOCOL_VIOLATION',
+                    'Invalid protocol length',
+                    {
+                        originalLength: BT_PROTOCOL_LEN,
+                        receivedPstrLen: receivedPstrLen
+                    }
+                ),
+            )
         }
 
         const receivedPstr = buf.subarray(1, 1 + receivedPstrLen);
         if (!receivedPstr.equals(BT_PROTOCOL_BUFFER)) {
-            //err
+            this.fail(
+                ErrorFactory.network(
+                    'PROTOCOL_VIOLATION',
+                    'Protocol string mismatch',
+                    {
+                        originalBuf: BT_PROTOCOL_BUFFER,
+                        receivedBuf: receivedPstr
+                    }
+                ),
+            )
         }
 
         const reservedOffset = 1 + receivedPstrLen;
@@ -204,7 +235,16 @@ export class BitTorrentPeer extends EventEmitter {
         const receivedInfoHash = buf.subarray(infoHashOffset, infoHashOffset + 20);
 
         if (!receivedInfoHash.equals(this.infoHash)) {
-            //err
+            this.fail(
+                ErrorFactory.network(
+                    'PROTOCOL_VIOLATION',
+                    'InfoHash mismatch',
+                    {
+                        originalInfoHash: this.infoHash,
+                        receivedInfoHash: receivedInfoHash
+                    },
+                )
+            )
         }
 
         const peerIdOffset = infoHashOffset + 20;
@@ -349,20 +389,87 @@ export class BitTorrentPeer extends EventEmitter {
 
     private onEnd(): void {
         // Handle stream end
+        if (!this.handshakeComplete && !this.handledFailure) {
+            this.emit('End event emitted even though hanshake is incomplete');
+            return
+        };
+
+        this.emit('CONNECTION_CLOSED');
     }
 
     private onClose(): void {
         // Handle socket disconnect
+        if (!this.handshakeComplete && !this.handledFailure) {
+            this.handledFailure = true;
+            this.fail(
+                ErrorFactory.socket(
+                    'HANDSHAKE_INCOMPLETE',
+                    'Socket closed even though hanshake is incomplete'
+                )
+            )
+            return
+        };
+
+        this.emit("SOCKET_CLOSED", {
+            peer: `${this.remotePeerState.ip}:${this.remotePeerState.port}`
+        });
     }
 
     private onError(err: Error): void {
-        // Handle socket errors
+        // Extract native Node.js socket error code (e.g. ECONNREFUSED)
+        const sysErr = err as NodeJS.ErrnoException;
+        const mappedCode = this.mapSocketErrorCode(sysErr.code);
+
+        this.fail(
+            ErrorFactory.socket(
+                mappedCode,
+                sysErr.message || 'Underlying transport socket error'
+            )
+        );
     }
+
+    /**
+     * Maps raw OS/Node.js socket error codes to application-level codes
+     */
+    private mapSocketErrorCode(code?: string): SocketErrorCode {
+        switch (code) {
+            case 'ECONNREFUSED':
+                return 'CONNECTION_REFUSED';
+            case 'ETIMEDOUT':
+                return 'CONNECTION_TIMED_OUT';
+            case 'ECONNRESET':
+                return 'CONNECTION_RESET';
+            case 'EPIPE':
+                return 'BROKEN_PIPE';
+            default:
+                return 'SOCKET_ERROR';
+        }
+    }
+
 
     private onConnect(): void {
         // Handle successful connection
     }
 
-    private fail(err: Error) {
+    private fail(err: Error): void {
+        if (this.handledFailure) return;
+        this.handledFailure = true;
+
+        // 1. Clear any active connection timers
+        if (this.connectTimeout) {
+            clearTimeout(this.connectTimeout);
+            this.connectTimeout = undefined;
+        }
+
+        // 2. Detach socket listeners to prevent memory leaks
+        this.detachTransportHandlers();
+
+        // 3. Destroy socket if open
+        if (this.socket && !this.socket.destroyed) {
+            this.socket.destroy();
+        }
+
+        // 4. Emit standard error for factory/pool manager
+        this.emit("error", err);
     }
 }

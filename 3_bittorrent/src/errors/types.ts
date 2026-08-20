@@ -9,6 +9,7 @@ export type CodecErrorCode =
 
 export type NetworkErrorCode =
     | 'HANDSHAKE_TIMEOUT'
+    | 'PEER_FAILED'
     | 'PEER_RESET'
     | 'CONNECTION_REFUSED'
     | 'PROTOCOL_VIOLATION';
@@ -18,10 +19,29 @@ export type TrackerErrorCode =
     | 'SCRAPE_FAILED'
     | 'INVALID_TRACKER_RESPONSE';
 
+export type SocketErrorCode =
+    | 'CONNECTION_TIMED_OUT'
+    | 'CONNECTION_RESET'
+    | 'HANDSHAKE_INCOMPLETE'
+    | 'CONNECTION_REFUSED'
+    | 'BROKEN_PIPE'
+    | 'SOCKET_ERROR';
+
 export type SystemErrorCode = 'UNHANDLED_EXCEPTION';
 
-export type AppErrorCode = CodecErrorCode | NetworkErrorCode | TrackerErrorCode | SystemErrorCode;
-export type DomainOpts = 'CODEC' | 'NETWORK' | 'TRACKER' | 'SYSTEM';
+export type AppErrorCode =
+    | CodecErrorCode
+    | NetworkErrorCode
+    | TrackerErrorCode
+    | SystemErrorCode
+    | SocketErrorCode;
+
+export type DomainOpts =
+    | 'CODEC'
+    | 'NETWORK'
+    | 'TRACKER'
+    | 'SYSTEM'
+    | 'SOCKET';
 
 export interface BaseErrorOpts {
     domain: DomainOpts;
