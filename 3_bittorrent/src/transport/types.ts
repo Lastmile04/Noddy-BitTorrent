@@ -48,7 +48,7 @@ export interface PeerMessage {
 
 // protocols.ts - Extracted configuration and constraints
 export const BT_PROTOCOL_LEN = 19;
-export const BT_PROTOCOL_STR = "BitTorrent protocol" as const;
+const BT_PROTOCOL_STR = "BitTorrent protocol" as const;
 
 // Read-only byte representation pre-allocated to avoid on-the-fly encoding costs
 export const BT_PROTOCOL_BUFFER = Buffer.from(BT_PROTOCOL_STR, 'ascii');

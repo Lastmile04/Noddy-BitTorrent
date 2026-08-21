@@ -27,6 +27,9 @@ export type SocketErrorCode =
     | 'BROKEN_PIPE'
     | 'SOCKET_ERROR';
 
+export type PeerStateErrorCode =
+    | 'INAVALID_STATE_TRANSITION';
+
 export type SystemErrorCode = 'UNHANDLED_EXCEPTION';
 
 export type AppErrorCode =
@@ -34,14 +37,16 @@ export type AppErrorCode =
     | NetworkErrorCode
     | TrackerErrorCode
     | SystemErrorCode
-    | SocketErrorCode;
+    | SocketErrorCode
+    | PeerStateErrorCode;
 
 export type DomainOpts =
     | 'CODEC'
     | 'NETWORK'
     | 'TRACKER'
     | 'SYSTEM'
-    | 'SOCKET';
+    | 'SOCKET'
+    | 'PEER_STATE';
 
 export interface BaseErrorOpts {
     domain: DomainOpts;
@@ -50,3 +55,11 @@ export interface BaseErrorOpts {
     cause?: unknown;
     context?: Record<string, unknown>;
 }
+
+export type LifecycleStateOpts =
+    | 'NEW'
+    | 'CONNECTING'
+    | 'CONNECTED'
+    | 'READY'
+    | 'CLOSED'
+    | 'FAILED';
