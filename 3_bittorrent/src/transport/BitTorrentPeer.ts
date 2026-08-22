@@ -134,6 +134,28 @@ export class BitTorrentPeer extends EventEmitter {
         this.sendHandshake();
     }
 
+
+    private sendHandshake(): void {
+        const reserved = Buffer.alloc(8);
+        const pstrLenBuf = Buffer.from([BT_PROTOCOL_LEN]);
+
+        try {
+            const handshakeMsg = Buffer.concat([
+                pstrLenBuf,
+                BT_PROTOCOL_BUFFER,
+                reserved,
+                this.infoHash,
+                this.peerId,
+            ]);
+
+            this.socket.write(handshakeMsg);
+            this.emit("HANDSHAKE_SENT", { peer: `${this.remotePeerState.ip}:${this.remotePeerState.port}` });
+        } catch (err) {
+            this.fail(this.identifyError(err as Error));
+        }
+    }
+
+
     private onData(chunk: Buffer): void {
         this.bufQueue.push(chunk);
         this.bufferedBytes += chunk.length;
@@ -232,25 +254,6 @@ export class BitTorrentPeer extends EventEmitter {
     }
 
 
-    private sendHandshake(): void {
-        const reserved = Buffer.alloc(8);
-        const pstrLenBuf = Buffer.from([BT_PROTOCOL_LEN]);
-
-        try {
-            const handshakeMsg = Buffer.concat([
-                pstrLenBuf,
-                BT_PROTOCOL_BUFFER,
-                reserved,
-                this.infoHash,
-                this.peerId,
-            ]);
-
-            this.socket.write(handshakeMsg);
-            this.emit("HANDSHAKE_SENT", { peer: `${this.remotePeerState.ip}:${this.remotePeerState.port}` });
-        } catch (err) {
-            this.fail(this.identifyError(err as Error));
-        }
-    }
 
 
     private fail(err: Error): void {
@@ -512,6 +515,85 @@ export class BitTorrentPeer extends EventEmitter {
         }
     }
 
+    private sendPacket(id?: number, payload?: Buffer): void {
+        if (!this.socket || this.socket.destroyed) return;
+
+        if (id === undefined) {
+            this.socket.write(Buffer.alloc(4));
+            return;
+        }
+
+        const payloadLen = payload ? payload.length : 0;
+        const msgBuf = Buffer.alloc(4 + 1 + payloadLen);
+
+        msgBuf.writeUInt32BE(1 + payloadLen, 0); // write length
+        msgBuf.writeUInt8(id, 4);
+
+        if (payload) payload.copy(msgBuf, 5);
+
+        this.socket.write(msgBuf);
+    }
+
+
+    public choke(): void {
+        if (this.remotePeerState.amChoking) return;
+        this.remotePeerState.amChoking = true;
+        this.sendPacket(0);
+    }
+
+    public unchoke(): void {
+        if (!this.remotePeerState.amChoking) return;
+        this.remotePeerState.amChoking = false;
+        this.sendPacket(1);
+    }
+
+    public interested(): void {
+        if (this.remotePeerState.amInterested) return;
+        this.remotePeerState.amInterested = true;
+        this.sendPacket(2);
+    }
+
+    public uninterested(): void {
+        if (!this.remotePeerState.amInterested) return;
+        this.remotePeerState.amInterested = false;
+        this.sendPacket(3);
+    }
+
+    public have(): void {
+    }
+
+    public bitfield(): void { }
+
+    public request(index: number, begin: number, length: number): void {
+        if (length > 16384) {
+            throw ErrorFactory.peer_state(
+                'INVALID_REQUEST',
+                "Requested length exceeds standard 16KiB block size",
+                { length: length }
+            );
+        }
+
+        if (this.remotePeerState.peerChoking) {
+            throw ErrorFactory.peer_state(
+                'INVALID_REQUEST',
+                'Cannot send REQUEST while peer is choking us',
+                { peerChokingStatus: this.remotePeerState.peerChoking }
+            );
+        }
+
+        const payload = Buffer.alloc(12);
+        payload.writeUInt32BE(index, 0);
+        payload.writeUInt32BE(begin, 4);
+        payload.writeUInt32BE(length, 8);
+
+        this.sendPacket(6, payload);
+    }
+
+    public piece():void {}
+
+    public cancel():void {}
+
+
 
     // Normalizes system/socket errors vs generic application errors
     private identifyError(err: Error): Error {
@@ -545,4 +627,5 @@ export class BitTorrentPeer extends EventEmitter {
                 return 'SOCKET_ERROR';
         }
     }
+
 }
