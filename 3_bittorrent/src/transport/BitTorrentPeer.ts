@@ -121,7 +121,7 @@ export class BitTorrentPeer extends EventEmitter {
         }
         else {
             throw ErrorFactory.peer_state(
-                'INAVALID_STATE_TRANSITION',
+                'INVALID_STATE_TRANSITION',
                 "The caller asked this peer to perform an operation that isn't valid in its current state",
             );
         }
@@ -214,8 +214,13 @@ export class BitTorrentPeer extends EventEmitter {
 
                 let msgBuf = this.consumeBytes(totalMsgLen).subarray(4);
 
-                const msgObj = this.parseMsg(msgBuf);
-                this.handlePeerMessage(msgObj);
+                try {
+                    const msgObj = this.parseMsg(msgBuf);
+                    this.handlePeerMessage(msgObj);
+                }
+                catch (err) {
+                    this.fail(ErrorFactory.normalize(err));
+                }
             }
         }
     }
@@ -225,7 +230,7 @@ export class BitTorrentPeer extends EventEmitter {
         // Handle stream end
         if (!this.handshakeComplete && !this.handledFailure) {
             this.emit('End event emitted even though handshake is incomplete');
-            return
+            return;
         };
 
         this.emit('CONNECTION_CLOSED');
@@ -241,7 +246,7 @@ export class BitTorrentPeer extends EventEmitter {
                     'Socket closed even though handshake is incomplete'
                 )
             )
-            return
+            return;
         };
 
         this.lifecycleState = 'CLOSED';
@@ -476,7 +481,14 @@ export class BitTorrentPeer extends EventEmitter {
                 break;
 
             case "HAVE":
+                if (msgObj.pieceIndex === undefined) {
+                    throw ErrorFactory.peer_state(
+                        'INVALID_HAVE',
+                        "HAVE message missing pieceIndex"
+                    );
+                }
                 this.emit("have", msgObj.pieceIndex);
+                this.updateRemoteBitfield(msgObj.pieceIndex);
                 this.lastPeerActive = Date.now();
                 break;
 
@@ -513,6 +525,17 @@ export class BitTorrentPeer extends EventEmitter {
                 this.lastPeerActive = Date.now();
                 break;
         }
+    }
+
+    private updateRemoteBitfield(pieceIdx: number): void {
+        if (!this.remotePeerState.bitfield) {
+            const expectedLength = Math.ceil(this.pieceCount / 8);
+            this.remotePeerState.bitfield = Buffer.alloc(expectedLength);
+        }
+
+        const byteIdx = Math.floor(pieceIdx / 8);
+        const bitOffset = 7 - (pieceIdx % 8); //Bittorrent use Big-Endian bit order
+        this.remotePeerState.bitfield[byteIdx] |= (1 << bitOffset);
     }
 
     private sendPacket(id?: number, payload?: Buffer): void {

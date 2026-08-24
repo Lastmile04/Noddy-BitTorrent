@@ -34,6 +34,8 @@ export type PeerStateErrorCode =
     | 'INVALID_BITFIELD_LENGTH'
     | 'INVALID_PIECE'
     | 'INVALID_CANCEL'
+    | 'INVALID_PIECE_INDEX'
+    | 'INVALID_HAVE';
 
 export type SystemErrorCode = 'UNHANDLED_EXCEPTION';
 
