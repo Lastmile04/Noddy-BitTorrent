@@ -28,9 +28,12 @@ export type SocketErrorCode =
     | 'SOCKET_ERROR';
 
 export type PeerStateErrorCode =
-    | 'INAVALID_STATE_TRANSITION'
+    | 'INVALID_STATE_TRANSITION'
     | 'INVALID_REQUEST'
-    | 'INVALID_ARGUMENT';
+    | 'INVALID_ARGUMENT'
+    | 'INVALID_BITFIELD_LENGTH'
+    | 'INVALID_PIECE'
+    | 'INVALID_CANCEL'
 
 export type SystemErrorCode = 'UNHANDLED_EXCEPTION';
 

@@ -22,8 +22,9 @@ export class BitTorrentPeer extends EventEmitter {
     lifecycleState: LifecycleStateOpts;
     resolve: any;
     reject: any;
+    pieceCount: number;
 
-    constructor({ socket, peer, peerId, infoHash, pieceLength, totalLength }: PeerConfig) {
+    constructor({ socket, peer, peerId, infoHash, pieceLength, totalLength, pieceCount }: PeerConfig) {
         super();
         this.socket = socket;
         this.peerId = peerId;
@@ -40,6 +41,7 @@ export class BitTorrentPeer extends EventEmitter {
         this.lifecycleState = 'NEW';
         this.resolve = undefined;
         this.reject = undefined;
+        this.pieceCount = pieceCount;
 
         this.remotePeerState = {
             ip: peer.ip,
@@ -119,8 +121,8 @@ export class BitTorrentPeer extends EventEmitter {
         }
         else {
             throw ErrorFactory.peer_state(
-                'INVALID_STATE_TRANSITION',
-                "The caller asked this peer to perform an operation that isn't valid in its current state"
+                'INAVALID_STATE_TRANSITION',
+                "The caller asked this peer to perform an operation that isn't valid in its current state",
             );
         }
     }
@@ -252,8 +254,6 @@ export class BitTorrentPeer extends EventEmitter {
     private onError(err: Error): void {
         this.fail(this.identifyError(err));
     }
-
-
 
 
     private fail(err: Error): void {
@@ -559,26 +559,114 @@ export class BitTorrentPeer extends EventEmitter {
         this.sendPacket(3);
     }
 
-    public have(): void {
-    }
-
-    public bitfield(): void { }
-
-    public request(index: number, begin: number, length: number): void {
-        if (length > 16384) {
+    public have(index: number): void {
+        // Validation: Ensure the index is within the valid piece range
+        if (index < 0 || index >= this.pieceCount) {
             throw ErrorFactory.peer_state(
-                'INVALID_REQUEST',
-                "Requested length exceeds standard 16KiB block size",
-                { length: length }
+                'INVALID_PIECE_INDEX',
+                `Piece index ${index} is out of bounds`,
+                { index, totalPieces: this.pieceCount }
             );
         }
 
-        if (this.remotePeerState.peerChoking) {
+        // Correct buffer allocation and assignment
+        const payload = Buffer.alloc(4);
+        payload.writeUInt32BE(index, 0);
+
+        this.sendPacket(4, payload);
+    }
+
+    public bitfield(bitfieldBuf: Buffer): void {
+        // Validation: Bitfield length should exactly match the number of pieces divided by 8 (rounded up)
+        const expectedLength = Math.ceil(this.pieceCount / 8);
+        if (bitfieldBuf.length !== expectedLength) {
             throw ErrorFactory.peer_state(
-                'INVALID_REQUEST',
-                'Cannot send REQUEST while peer is choking us',
-                { peerChokingStatus: this.remotePeerState.peerChoking }
+                'INVALID_BITFIELD_LENGTH',
+                `Expected bitfield length of ${expectedLength}, got ${bitfieldBuf.length}`,
+                { expected: expectedLength, received: bitfieldBuf.length }
             );
+        }
+
+        this.sendPacket(5, bitfieldBuf);
+    }
+
+    public request(index: number, begin: number, length: number): void {
+        this.constructPayload(index, begin, length, 6);
+    }
+
+    public piece(index: number, begin: number, block: Buffer): void {
+
+        if (block.length > 16384) {
+            throw ErrorFactory.peer_state(
+                'INVALID_PIECE',
+                "Given piece length exceeds standard 16KiB block size",
+                { length: block.length, block: block }
+            );
+        }
+
+        // Additional validation: Prevent requesting bytes beyond the piece boundaries
+        if (begin + block.length > this.pieceLength) {
+            throw ErrorFactory.peer_state(
+                'INVALID_PIECE',
+                "Given block exceeds piece length boundaries",
+                { begin, length: block.length, pieceLength: this.pieceLength }
+            );
+        }
+
+        const payload = Buffer.alloc(8 + block.length);
+        payload.writeUInt32BE(index, 0);
+        payload.writeUInt32BE(begin, 4);
+        this.sendPacket(7, payload);
+    }
+
+    public cancel(index: number, begin: number, length: number): void {
+        this.constructPayload(index, begin, length, 8);
+    }
+
+    private constructPayload(index: number, begin: number, length: number, id: number): void {
+
+        if (length > 16384) {
+            if (id === 8) {
+                throw ErrorFactory.peer_state(
+                    'INVALID_CANCEL',
+                    "Given piece length for cancellation exceeds standard 16KiB block size",
+                    { length: length }
+                );
+            }
+            else {
+                throw ErrorFactory.peer_state(
+                    'INVALID_REQUEST',
+                    "Requested length exceeds standard 16KiB block size",
+                    { length: length }
+                );
+            }
+        }
+
+        // Additional validation: Prevent requesting bytes beyond the piece boundaries
+        if (begin + length > this.pieceLength) {
+            if (id === 8) {
+                throw ErrorFactory.peer_state(
+                    'INVALID_CANCEL',
+                    "Given block exceeds piece length boundaries",
+                    { begin, length, pieceLength: this.pieceLength }
+                );
+            }
+            else {
+                throw ErrorFactory.peer_state(
+                    'INVALID_REQUEST',
+                    "Requested block exceeds piece length boundaries",
+                    { begin, length, pieceLength: this.pieceLength }
+                );
+            }
+        }
+
+        if (id === 6) {
+            if (this.remotePeerState.peerChoking) {
+                throw ErrorFactory.peer_state(
+                    'INVALID_STATE_TRANSITION',
+                    "Cannot send REQUEST while peer is choking us"
+                );
+            }
         }
 
         const payload = Buffer.alloc(12);
@@ -586,14 +674,8 @@ export class BitTorrentPeer extends EventEmitter {
         payload.writeUInt32BE(begin, 4);
         payload.writeUInt32BE(length, 8);
 
-        this.sendPacket(6, payload);
+        this.sendPacket(id, payload);
     }
-
-    public piece():void {}
-
-    public cancel():void {}
-
-
 
     // Normalizes system/socket errors vs generic application errors
     private identifyError(err: Error): Error {

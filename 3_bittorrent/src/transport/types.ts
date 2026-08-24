@@ -8,6 +8,7 @@ export interface PeerConfig {
     infoHash: Buffer
     pieceLength: number
     totalLength: number
+    pieceCount: number
 }
 
 export interface PeerState {
