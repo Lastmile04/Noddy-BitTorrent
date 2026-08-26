@@ -12,7 +12,8 @@ export type NetworkErrorCode =
     | 'PEER_FAILED'
     | 'PEER_RESET'
     | 'CONNECTION_REFUSED'
-    | 'PROTOCOL_VIOLATION';
+    | 'PROTOCOL_VIOLATION'
+    | 'EXCESSIVE_FRAME_SIZE';
 
 export type TrackerErrorCode =
     | 'ANNOUNCE_FAILED'
@@ -31,11 +32,12 @@ export type PeerStateErrorCode =
     | 'INVALID_STATE_TRANSITION'
     | 'INVALID_REQUEST'
     | 'INVALID_ARGUMENT'
-    | 'INVALID_BITFIELD_LENGTH'
     | 'INVALID_PIECE'
     | 'INVALID_CANCEL'
     | 'INVALID_PIECE_INDEX'
-    | 'INVALID_HAVE';
+    | 'INVALID_HAVE'
+    | 'INVALID_BITFIELD'
+    | 'PEER_NOT_READY';
 
 export type SystemErrorCode = 'UNHANDLED_EXCEPTION';
 

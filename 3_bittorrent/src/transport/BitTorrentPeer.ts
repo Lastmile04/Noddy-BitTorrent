@@ -20,9 +20,10 @@ export class BitTorrentPeer extends EventEmitter {
     lastPeerActive?: number;
     handledFailure: boolean;
     lifecycleState: LifecycleStateOpts;
-    resolve: any;
-    reject: any;
+    connectResolve?: () => void;
+    connectReject?: (reason: Error) => void;
     pieceCount: number;
+    MAX_FRAME_SIZE: number;
 
     constructor({ socket, peer, peerId, infoHash, pieceLength, totalLength, pieceCount }: PeerConfig) {
         super();
@@ -39,9 +40,10 @@ export class BitTorrentPeer extends EventEmitter {
         this.lastPeerActive = undefined;
         this.handledFailure = false;
         this.lifecycleState = 'NEW';
-        this.resolve = undefined;
-        this.reject = undefined;
+        this.connectResolve = undefined;
+        this.connectReject = undefined;
         this.pieceCount = pieceCount;
+        this.MAX_FRAME_SIZE = 1048576;
 
         this.remotePeerState = {
             ip: peer.ip,
@@ -102,9 +104,9 @@ export class BitTorrentPeer extends EventEmitter {
 
     public connect() {
         if (this.lifecycleState === 'NEW') {
-            return new Promise((res, rej) => {
-                this.resolve = res;
-                this.reject = rej;
+            return new Promise<void>((res, rej) => {
+                this.connectResolve = res;
+                this.connectReject = rej;
                 this.lifecycleState = 'CONNECTING';
 
                 this.attachTransportHandlers();
@@ -176,8 +178,8 @@ export class BitTorrentPeer extends EventEmitter {
                                 originalLength: BT_PROTOCOL_LEN,
                                 receivedPstrLen: receivedPstrLen
                             }
-                        ),
-                    )
+                        )
+                    );
                     return;
                 }
 
@@ -194,20 +196,32 @@ export class BitTorrentPeer extends EventEmitter {
                     if (this.connectTimeout) clearTimeout(this.connectTimeout);
                     this.emit("HANDSHAKE_SUCCESS", parsed);
 
-                    if (this.resolve) {
-                        this.resolve();
+                    if (this.connectResolve) {
+                        this.connectResolve();
 
-                        this.resolve = undefined;
-                        this.reject = undefined;
+                        this.connectResolve = undefined;
+                        this.connectReject = undefined;
                     }
 
                 } catch (err) {
                     this.fail(ErrorFactory.normalize(err));
+                    return;
                 }
             } else {
                 if (this.bufferedBytes < 4) break;
 
-                const messageLength = this.peekUInt32BE(); // to get the length num from message prefix
+                const messageLength = this.peekUInt32BE();
+
+                if (messageLength > this.MAX_FRAME_SIZE) {
+                    this.fail(
+                        ErrorFactory.network(
+                            'EXCESSIVE_FRAME_SIZE',
+                            `Peer advertised message length (${messageLength} bytes) exceeding maximum allowed limit`
+                        )
+                    );
+                    return;
+                }
+
                 const totalMsgLen = 4 + messageLength;
 
                 if (this.bufferedBytes < totalMsgLen) break;
@@ -220,6 +234,7 @@ export class BitTorrentPeer extends EventEmitter {
                 }
                 catch (err) {
                     this.fail(ErrorFactory.normalize(err));
+                    return;
                 }
             }
         }
@@ -227,12 +242,6 @@ export class BitTorrentPeer extends EventEmitter {
 
 
     private onEnd(): void {
-        // Handle stream end
-        if (!this.handshakeComplete && !this.handledFailure) {
-            this.emit('End event emitted even though handshake is incomplete');
-            return;
-        };
-
         this.emit('CONNECTION_CLOSED');
     }
 
@@ -245,11 +254,10 @@ export class BitTorrentPeer extends EventEmitter {
                     'HANDSHAKE_INCOMPLETE',
                     'Socket closed even though handshake is incomplete'
                 )
-            )
-            return;
+            );
         };
 
-        this.lifecycleState = 'CLOSED';
+        if (this.lifecycleState !== 'FAILED') this.lifecycleState = 'CLOSED';
         this.emit("SOCKET_CLOSED", {
             peer: `${this.remotePeerState.ip}:${this.remotePeerState.port}`
         });
@@ -262,17 +270,17 @@ export class BitTorrentPeer extends EventEmitter {
 
 
     private fail(err: Error): void {
-        if (this.handledFailure) return;
-        this.handledFailure = true;
+        if (this.lifecycleState === 'FAILED' || this.lifecycleState === 'CLOSED') return;
 
         this.lifecycleState = 'FAILED';
+        this.handledFailure = true;
 
         this.cleanup();
         if (this.socket && !this.socket.destroyed) this.socket.destroy();
-        if (this.handshakeComplete && this.reject) this.reject(err);
+        if (this.connectReject) this.connectReject(err);
 
-        this.reject = undefined;
-        this.resolve = undefined;
+        this.connectReject = undefined;
+        this.connectResolve = undefined;
 
         this.emit("error", err);
     }
@@ -444,10 +452,18 @@ export class BitTorrentPeer extends EventEmitter {
                 };
 
             default:
-                return { type: "UNKNOWN", id };
+                this.fail(
+                    ErrorFactory.network(
+                        'PROTOCOL_VIOLATION',
+                        'Unknown message received form peer',
+                        { block: msg, id }
+                    )
+                );
+                return { type: 'UNKNOWN', id };
         }
     }
 
+    private hasReceivedFirstMsg: boolean = false;
 
     private handlePeerMessage(msgObj: PeerMessage): void {
 
@@ -482,23 +498,88 @@ export class BitTorrentPeer extends EventEmitter {
 
             case "HAVE":
                 if (msgObj.pieceIndex === undefined) {
-                    throw ErrorFactory.peer_state(
-                        'INVALID_HAVE',
-                        "HAVE message missing pieceIndex"
+                    return this.fail(
+                        ErrorFactory.peer_state(
+                            'INVALID_HAVE',
+                            "HAVE message missing pieceIndex"
+                        )
                     );
                 }
+
+                if (msgObj.pieceIndex > this.pieceCount - 1 || msgObj.pieceIndex < 0) {
+                    return this.fail(
+                        ErrorFactory.peer_state(
+                            'INVALID_HAVE',
+                            "HAVE message has invalid pieceIndex"
+                        )
+                    );
+                };
+
                 this.emit("have", msgObj.pieceIndex);
                 this.updateRemoteBitfield(msgObj.pieceIndex);
                 this.lastPeerActive = Date.now();
                 break;
 
             case "BITFIELD":
+                if (this.hasReceivedFirstMsg) {
+                    return this.fail(
+                        ErrorFactory.peer_state(
+                            'INVALID_BITFIELD',
+                            'Bitfield message must be the first message received after handshake'
+                        )
+                    );
+                }
+                if (msgObj.bitfield === undefined) {
+                    return this.fail(
+                        ErrorFactory.peer_state(
+                            'INVALID_BITFIELD',
+                            "Bitfield message missing even though id is bitfield"
+                        )
+                    );
+                }
+
+                if (!this.validateBitfield(msgObj.bitfield)) {
+                    return this.fail(
+                        ErrorFactory.peer_state(
+                            'INVALID_BITFIELD',
+                            "Invalid bitfield payload length or spare bits set",
+                            { bitfield: msgObj.bitfield }
+                        )
+                    );
+                }
                 this.remotePeerState.bitfield = msgObj.bitfield;
                 this.lastPeerActive = Date.now();
                 this.emit("bitfield", msgObj.bitfield);
                 break;
 
-            case "PIECE":
+            case "PIECE": {
+                if (msgObj.index === undefined || msgObj.begin === undefined || !msgObj.block) {
+                    return this.fail(ErrorFactory.peer_state('INVALID_PIECE', 'Missing PIECE payload data'));
+                }
+
+                if (msgObj.index < 0 || msgObj.index >= this.pieceCount) {
+                    return this.fail(ErrorFactory.peer_state('INVALID_PIECE', 'PIECE index out of bounds'));
+                }
+
+                const isLastPiece = msgObj.index === this.pieceCount - 1;
+                const expectedPieceSize = isLastPiece
+                    ? (this.totalLength % this.pieceLength) || this.pieceLength
+                    : this.pieceLength;
+
+                const blockLength = msgObj.block.length;
+
+                if (blockLength === 0 || blockLength > 16384) {
+                    return this.fail(ErrorFactory.peer_state('INVALID_PIECE', 'PIECE block size violates maximum 16 KiB limit'));
+                }
+
+                if (
+                    msgObj.begin < 0 ||
+                    msgObj.begin >= expectedPieceSize ||
+                    (msgObj.begin + blockLength) > expectedPieceSize
+                ) {
+                    return this.fail(ErrorFactory.peer_state('INVALID_PIECE', 'PIECE offset or length exceeds piece boundary'));
+                }
+
                 this.emit("block", {
                     index: msgObj.index,
                     begin: msgObj.begin,
@@ -506,8 +587,49 @@ export class BitTorrentPeer extends EventEmitter {
                 });
                 this.lastPeerActive = Date.now();
                 break;
+            }
 
-            case "REQUEST":
+            case "REQUEST": {
+                if (msgObj.index === undefined || msgObj.begin === undefined || msgObj.length === undefined) {
+                    return this.fail(ErrorFactory.peer_state('INVALID_REQUEST', 'Missing REQUEST payload data'));
+                }
+
+                if (msgObj.index < 0 || msgObj.index >= this.pieceCount) {
+                    return this.fail(ErrorFactory.peer_state('INVALID_REQUEST', 'REQUEST index out of bounds'));
+                }
+
+                if (msgObj.length <= 0 || msgObj.length > 16384) {
+                    return this.fail(ErrorFactory.peer_state(
+                        'INVALID_REQUEST',
+                        "REQUEST length violates standard 16KiB block size limit",
+                        { length: msgObj.length }
+                    ));
+                }
+
+                if (this.remotePeerState.amChoking) {
+                    return this.fail(ErrorFactory.peer_state(
+                        'INVALID_STATE_TRANSITION',
+                        "Cannot accept REQUEST while we are choking the peer"
+                    ));
+                }
+
+                const isLastPiece = msgObj.index === this.pieceCount - 1;
+                const expectedPieceSize = isLastPiece
+                    ? (this.totalLength % this.pieceLength) || this.pieceLength
+                    : this.pieceLength;
+
+                if (
+                    msgObj.begin < 0 ||
+                    msgObj.begin >= expectedPieceSize ||
+                    (msgObj.begin + msgObj.length) > expectedPieceSize
+                ) {
+                    return this.fail(ErrorFactory.peer_state(
+                        'INVALID_REQUEST',
+                        "REQUEST offset or length exceeds piece boundaries",
+                        { begin: msgObj.begin, length: msgObj.length, expectedPieceSize }
+                    ));
+                }
+
                 this.emit("request", {
                     index: msgObj.index,
                     begin: msgObj.begin,
@@ -515,8 +637,45 @@ export class BitTorrentPeer extends EventEmitter {
                 });
                 this.lastPeerActive = Date.now();
                 break;
+            }
 
-            case "CANCEL":
+            case "CANCEL": {
+                if (msgObj.index === undefined || msgObj.begin === undefined || msgObj.length === undefined) {
+                    return this.fail(ErrorFactory.peer_state('INVALID_CANCEL', 'Missing CANCEL payload data'));
+                }
+
+                if (msgObj.index < 0 || msgObj.index >= this.pieceCount) {
+                    return this.fail(ErrorFactory.peer_state('INVALID_CANCEL', 'CANCEL index out of bounds'));
+                }
+
+                if (msgObj.length <= 0 || msgObj.length > 16384) {
+                    return this.fail(ErrorFactory.peer_state(
+                        'INVALID_CANCEL',
+                        "CANCEL length violates standard 16KiB block size limit",
+                        { length: msgObj.length }
+                    ));
+                }
+
+                // NOTE: CANCEL intentionally omits the `amChoking` check. 
+                // A peer is always permitted to clean up and cancel an outstanding request.
+
+                const isLastPiece = msgObj.index === this.pieceCount - 1;
+                const expectedPieceSize = isLastPiece
+                    ? (this.totalLength % this.pieceLength) || this.pieceLength
+                    : this.pieceLength;
+
+                if (
+                    msgObj.begin < 0 ||
+                    msgObj.begin >= expectedPieceSize ||
+                    (msgObj.begin + msgObj.length) > expectedPieceSize
+                ) {
+                    return this.fail(ErrorFactory.peer_state(
+                        'INVALID_CANCEL',
+                        "CANCEL offset or length exceeds piece boundaries",
+                        { begin: msgObj.begin, length: msgObj.length, expectedPieceSize }
+                    ));
+                }
+
                 this.emit("cancel", {
                     index: msgObj.index,
                     begin: msgObj.begin,
@@ -524,7 +683,10 @@ export class BitTorrentPeer extends EventEmitter {
                 });
                 this.lastPeerActive = Date.now();
                 break;
+            }
         }
+
+        this.hasReceivedFirstMsg = true;
     }
 
     private updateRemoteBitfield(pieceIdx: number): void {
@@ -538,8 +700,32 @@ export class BitTorrentPeer extends EventEmitter {
         this.remotePeerState.bitfield[byteIdx] |= (1 << bitOffset);
     }
 
+
+    private validateBitfield(payload: Buffer): boolean {
+        const expectedLength = Math.ceil(this.pieceCount / 8);
+
+        if (payload.length !== expectedLength) return false;
+
+        const remainder = this.pieceCount % 8; // trailing bits in the final byte are set to zero
+        if (remainder !== 0) {
+            const unusedBits = 8 - remainder;
+            const lastByte = payload[payload.length - 1];
+
+            // Mask isolating unused lower bits (e.g., if 6 unused bits -> 0b00111111)
+            const mask = (1 << unusedBits) - 1;
+
+            if ((lastByte & mask) !== 0) return false;
+        }
+        return true;
+    }
+
     private sendPacket(id?: number, payload?: Buffer): void {
-        if (!this.socket || this.socket.destroyed) return;
+        if (this.lifecycleState !== 'READY' || !this.socket || this.socket.destroyed) {
+            throw ErrorFactory.peer_state(
+                'PEER_NOT_READY',
+                `Cannot send packet: peer is in lifecycle state '${this.lifecycleState}' or socket is destroyed`
+            );
+        }
 
         if (id === undefined) {
             this.socket.write(Buffer.alloc(4));
@@ -601,25 +787,62 @@ export class BitTorrentPeer extends EventEmitter {
 
     public bitfield(bitfieldBuf: Buffer): void {
         // Validation: Bitfield length should exactly match the number of pieces divided by 8 (rounded up)
-        const expectedLength = Math.ceil(this.pieceCount / 8);
-        if (bitfieldBuf.length !== expectedLength) {
+        if (!this.validateBitfield(bitfieldBuf)) {
             throw ErrorFactory.peer_state(
-                'INVALID_BITFIELD_LENGTH',
-                `Expected bitfield length of ${expectedLength}, got ${bitfieldBuf.length}`,
-                { expected: expectedLength, received: bitfieldBuf.length }
+                'INVALID_BITFIELD',
+                "Invalid bitfield payload length or spare bits set",
+                { bitfield: bitfieldBuf }
             );
-        }
-
+        };
         this.sendPacket(5, bitfieldBuf);
     }
 
     public request(index: number, begin: number, length: number): void {
-        this.constructPayload(index, begin, length, 6);
+
+        if (index > this.pieceCount - 1 || index < 0) {
+            throw ErrorFactory.peer_state(
+                'INVALID_REQUEST',
+                "The given index is invalid"
+            );
+        };
+
+        if (length > 16384 || length < 0) {
+            throw ErrorFactory.peer_state(
+                'INVALID_REQUEST',
+                "Requested length exceeds standard 16KiB block size",
+                { length: length }
+            );
+        }
+
+        if (this.remotePeerState.peerChoking) {
+            throw ErrorFactory.peer_state(
+                'INVALID_STATE_TRANSITION',
+                "Cannot send REQUEST while peer is choking us"
+            );
+        }
+
+        if (begin + length > this.pieceLength || begin < 0) {
+            throw ErrorFactory.peer_state(
+                'INVALID_REQUEST',
+                "Requested block exceeds piece length boundaries",
+                { begin, length, pieceLength: this.pieceLength }
+            );
+        }
+
+        const payload = this.constructPayload(index, begin, length);
+        this.sendPacket(6, payload);
     }
 
     public piece(index: number, begin: number, block: Buffer): void {
 
-        if (block.length > 16384) {
+        if (index > this.pieceCount - 1 || index < 0) {
+            throw ErrorFactory.peer_state(
+                'INVALID_PIECE',
+                "The given index is invalid"
+            );
+        };
+
+        if (block.length > 16384 || block.length < 0) {
             throw ErrorFactory.peer_state(
                 'INVALID_PIECE',
                 "Given piece length exceeds standard 16KiB block size",
@@ -627,8 +850,19 @@ export class BitTorrentPeer extends EventEmitter {
             );
         }
 
+        const isLastPiece = index === this.pieceCount - 1;
+        const expectedPieceSize = isLastPiece
+            ? (this.totalLength % this.pieceLength) || this.pieceLength
+            : this.pieceLength;
+
+        const blockLength = block.length;
+
         // Additional validation: Prevent requesting bytes beyond the piece boundaries
-        if (begin + block.length > this.pieceLength) {
+        if (
+            begin < 0 ||
+            begin >= expectedPieceSize ||
+            (begin + blockLength) > expectedPieceSize
+        ) {
             throw ErrorFactory.peer_state(
                 'INVALID_PIECE',
                 "Given block exceeds piece length boundaries",
@@ -639,65 +873,47 @@ export class BitTorrentPeer extends EventEmitter {
         const payload = Buffer.alloc(8 + block.length);
         payload.writeUInt32BE(index, 0);
         payload.writeUInt32BE(begin, 4);
+        payload.set(block, 8);
         this.sendPacket(7, payload);
     }
 
     public cancel(index: number, begin: number, length: number): void {
-        this.constructPayload(index, begin, length, 8);
+
+        if (index > this.pieceCount - 1 || index < 0) {
+            throw ErrorFactory.peer_state(
+                'INVALID_CANCEL',
+                "The given index is invalid"
+            );
+        };
+
+        if (length > 16384 || length < 0) {
+            throw ErrorFactory.peer_state(
+                'INVALID_CANCEL',
+                "Given piece length for cancellation exceeds standard 16KiB block size",
+                { length: length }
+            );
+        }
+
+        if (begin + length > this.pieceLength || begin < 0) {
+            throw ErrorFactory.peer_state(
+                'INVALID_CANCEL',
+                "Given block exceeds piece length boundaries",
+                { begin, length, pieceLength: this.pieceLength }
+            );
+        }
+        const payload = this.constructPayload(index, begin, length);
+        this.sendPacket(8, payload);
     }
 
-    private constructPayload(index: number, begin: number, length: number, id: number): void {
 
-        if (length > 16384) {
-            if (id === 8) {
-                throw ErrorFactory.peer_state(
-                    'INVALID_CANCEL',
-                    "Given piece length for cancellation exceeds standard 16KiB block size",
-                    { length: length }
-                );
-            }
-            else {
-                throw ErrorFactory.peer_state(
-                    'INVALID_REQUEST',
-                    "Requested length exceeds standard 16KiB block size",
-                    { length: length }
-                );
-            }
-        }
-
-        // Additional validation: Prevent requesting bytes beyond the piece boundaries
-        if (begin + length > this.pieceLength) {
-            if (id === 8) {
-                throw ErrorFactory.peer_state(
-                    'INVALID_CANCEL',
-                    "Given block exceeds piece length boundaries",
-                    { begin, length, pieceLength: this.pieceLength }
-                );
-            }
-            else {
-                throw ErrorFactory.peer_state(
-                    'INVALID_REQUEST',
-                    "Requested block exceeds piece length boundaries",
-                    { begin, length, pieceLength: this.pieceLength }
-                );
-            }
-        }
-
-        if (id === 6) {
-            if (this.remotePeerState.peerChoking) {
-                throw ErrorFactory.peer_state(
-                    'INVALID_STATE_TRANSITION',
-                    "Cannot send REQUEST while peer is choking us"
-                );
-            }
-        }
+    private constructPayload(index: number, begin: number, length: number): Buffer {
 
         const payload = Buffer.alloc(12);
         payload.writeUInt32BE(index, 0);
         payload.writeUInt32BE(begin, 4);
         payload.writeUInt32BE(length, 8);
 
-        this.sendPacket(id, payload);
+        return payload;
     }
 
     // Normalizes system/socket errors vs generic application errors
@@ -732,5 +948,4 @@ export class BitTorrentPeer extends EventEmitter {
                 return 'SOCKET_ERROR';
         }
     }
-
 }
