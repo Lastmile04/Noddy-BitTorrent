@@ -1,8 +1,20 @@
 import { EventEmitter } from "node:stream";
-import { computeSha1Hash } from '../identity/computeHash.js';
-import { PieceManagerConfig } from "./types.js";
+//import { computeSha1Hash } from '../identity/computeHash.js';
+import { PieceManagerConfig, ActivePiece } from "./types.js";
 
 export class PieceManager extends EventEmitter {
+    pieceLength: number;
+    pieceHashes: Buffer[];
+    totalLength: number;
+    isMultiFile: boolean;
+    pieceCount: number;
+    lastPieceLength: number;
+    targetPieceIdx?: number;
+    downloadedBytes: number;
+    pieceBuffer?: Buffer;
+    clientBitfield?: Buffer;
+    private activePieces: Map<number, ActivePiece>
+
     constructor({
         pieceLength,
         pieceHashes,
@@ -11,16 +23,22 @@ export class PieceManager extends EventEmitter {
         pieceCount
     }: PieceManagerConfig) {
         super();
-        this.pieceHashes = torrentMeta.pieceHashes;
-        this.targetPieceIdx = null;
+        this.pieceHashes = pieceHashes;
+        this.pieceLength = pieceLength;
+        this.totalLength = totalLength;
+        this.isMultiFile = isMultiFile;
+        this.pieceCount = pieceCount;
+        this.targetPieceIdx = undefined;
         this.downloadedBytes = 0;
-        this.pieceBuffer = null;
-
+        this.pieceBuffer = undefined;
+        this.clientBitfield = undefined;
+        this.lastPieceLength = (totalLength % pieceLength) || pieceLength;
     }
 
+}
 
+/**
     findNeeded() {
-        // NOTE: For MVP's sake we'll return as soon as we have a valid pieceCount instead of collecting all the valid pieceCounts in peer Bitfield
         for (let byteIdx = 0; byteIdx < this.peerBitfield.length; byteIdx++) {
             const peerByte = this.peerBitfield[byteIdx];
             const myByte = this.bitfield ? this.bitfield[byteIdx] : 0;
@@ -44,4 +62,4 @@ export class PieceManager extends EventEmitter {
 
         return this.pieceHashes[idx].equals(pieceHash);
     }
-}
+**/

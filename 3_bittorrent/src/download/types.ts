@@ -7,6 +7,12 @@ export interface DownloadManagerConfig {
     torrentMeta: TorrentMeta
 }
 
+export interface ActivePiece {
+    buffer: Buffer;
+    downloadedBytes: number;
+    receivedBlocks: Set<number>;
+}
+
 export interface PieceManagerConfig {
     pieceLength: number
     pieceHashes: Buffer[]
@@ -15,6 +21,7 @@ export interface PieceManagerConfig {
     pieceCount: number
     lastPieceLength: number
 }
+
 
 export interface DownloadSession {
     torrentName: string;
@@ -30,3 +37,4 @@ export interface DownloadSession {
 
     status: "idle" | "downloading" | "completed" | "failed";
 }
+
