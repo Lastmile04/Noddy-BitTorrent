@@ -2,6 +2,7 @@ import { EventEmitter } from "node:stream";
 //import { computeSha1Hash } from '../identity/computeHash.js';
 import { PieceManagerConfig, ActivePiece } from "./types.js";
 import { ErrorFactory } from "../errors/TorrentError.js";
+import { computeSha1Hash } from "../identity/computeHash.js";
 
 export class PieceManager extends EventEmitter {
     pieceLength: number;
@@ -12,7 +13,7 @@ export class PieceManager extends EventEmitter {
     lastPieceLength: number;
 
     totalDowloadedBytes: number;
-    clientBitfield?: Buffer;
+    clientBitfield: Buffer;
 
     private activePieces: Map<number, ActivePiece>
 
@@ -81,14 +82,20 @@ export class PieceManager extends EventEmitter {
     }
 
     hasPiece(idx: number): boolean {
-        const byteIdx = Math.floor(this.pieceCount / 8);
+        const byteIdx = Math.floor(idx / 8);
         const bitOffset = 7 - (idx % 8);
-        if (this.clientBitfield === undefined) return false;
         return (this.clientBitfield[byteIdx] & (1 << bitOffset)) !== 0;
     };
 
     verifyAndFlushPiece(idx: number, buf: Buffer): void {
-        
-    };
+        const bufHash = computeSha1Hash(buf);
+
+        if (this.pieceHashes[idx].equals(buf)) {
+            const byteIdx = Math.floor(idx / 8);
+            const bitOffset = 7 - (idx % 8);
+            this.clientBitfield[byteIdx] |= (1 << bitOffset);
+
+        };
+    }
 }
 
