@@ -8,9 +8,9 @@ export interface DownloadManagerConfig {
 }
 
 export interface ActivePiece {
-    buffer: Buffer;
-    downloadedBytes: number;
-    receivedBlocks: Set<number>;
+    buffer: Buffer
+    downloadedBytes: number
+    receivedBlocks: Set<number>
 }
 
 export interface PieceManagerConfig {
@@ -24,17 +24,17 @@ export interface PieceManagerConfig {
 
 
 export interface DownloadSession {
-    torrentName: string;
-    totalLength: number;
+    torrentName: string
+    totalLength: number
 
-    totalPeers: number;
-    connectedPeers: number;
-    failedPeers: number;
-    activePeers: number;
+    totalPeers: number
+    connectedPeers: number
+    failedPeers: number
+    activePeers: number
 
-    downloadedBytes: number;
-    completedBytes: number;
+    downloadedBytes: number
+    completedBytes: number
 
-    status: "idle" | "downloading" | "completed" | "failed";
+    status: "idle" | "downloading" | "completed" | "failed"
 }
 

@@ -2,7 +2,7 @@ import crypto from 'crypto';
 // -XX####-############
 // -XX = Two-letter client code, #### = Version number (4 digits), - = Separator, ############ = Random characters (12 bytes)
 
-export function generatePeerId(client, ver) {
+export function generatePeerId(client: string, ver: string): Buffer {
     // Ensure client code is 2 characters
     const code = client.slice(0, 2).toUpperCase();
     // Ensure version is 4 digits (pad with zeros if needed)
