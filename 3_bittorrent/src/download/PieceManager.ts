@@ -46,20 +46,20 @@ export class PieceManager extends EventEmitter {
         }
 
         const pieceSize = pieceIdx === this.pieceCount - 1 ? this.lastPieceLength : this.pieceLength;
-        
+
         // Boundary Check
         if (begin < 0 || begin >= pieceSize || (begin + block.length) > pieceSize) {
-            throw ErrorFactory.peer_state('INVALID_BEGIN', 'BEGIN offset or length exceeds piece boundary', { begin, length: block.length });
+            throw ErrorFactory.piece_state('INVALID_BEGIN', 'BEGIN offset or length exceeds piece boundary', { begin, length: block.length });
         }
 
         // Overlap & Alignment Invariant
         if (begin % BLOCK_SIZE !== 0) {
-            throw ErrorFactory.peer_state('UNALIGNED_BLOCK', 'Block offset is not aligned to 16 KiB boundary', { begin });
+            throw ErrorFactory.piece_state('UNALIGNED_BLOCK', 'Block offset is not aligned to 16 KiB boundary', { begin });
         }
 
         const expectedBlockLength = Math.min(BLOCK_SIZE, pieceSize - begin);
         if (block.length !== expectedBlockLength) {
-             throw ErrorFactory.peer_state('INVALID_BLOCK_SIZE', 'Block length does not match standard 16 KiB or final remainder', { expected: expectedBlockLength, actual: block.length });
+            throw ErrorFactory.piece_state('INVALID_BLOCK_SIZE', 'Block length does not match standard 16 KiB or final remainder', { expected: expectedBlockLength, actual: block.length });
         }
 
         // Ignore blocks for pieces we have already verified and persisted
@@ -73,7 +73,7 @@ export class PieceManager extends EventEmitter {
             });
         }
 
-        const active = this.activePieces.get(pieceIdx)!; 
+        const active = this.activePieces.get(pieceIdx)!;
 
         // Prevent duplicate blocks (overlap is impossible due to alignment invariant)
         if (active.receivedBlocks.has(begin)) return;
@@ -101,17 +101,17 @@ export class PieceManager extends EventEmitter {
             const byteIdx = Math.floor(idx / 8);
             const bitOffset = 7 - (idx % 8);
             this.clientBitfield[byteIdx] |= (1 << bitOffset);
-            
+
             // Increment global progress only on successful verification
             this.totalVerifiedBytes += pieceSize;
-            
+
             // Delegate disk I/O to a separate Storage component
             this.emit('piece_verified', { index: idx, buffer: buf });
         } else {
             // Notify scheduler that the piece failed so it can be re-queued
             this.emit('piece_verification_failed', { index: idx });
         }
-        
+
         // State Transition: Clean up regardless of success or failure.
         this.activePieces.delete(idx);
     }
