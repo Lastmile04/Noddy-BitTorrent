@@ -40,7 +40,10 @@ export type PeerStateErrorCode =
     | 'PEER_NOT_READY';
 
 export type PieceErrorCode =
-    | 'INVALID_ACTIVE_PIECE';
+    | 'INVALID_ACTIVE_PIECE'
+    | 'INVALID_PIECE_INDEX'
+    | 'INVALID_BEGIN'
+    | 'UNALIGNED_BLOCK';
 
 export type SystemErrorCode = 'UNHANDLED_EXCEPTION';
 
@@ -60,7 +63,7 @@ export type DomainOpts =
     | 'SYSTEM'
     | 'SOCKET'
     | 'PEER_STATE'
-    | 'ACTIVE_PIECE';
+    | 'PIECE_STATE';
 
 export interface BaseErrorOpts {
     domain: DomainOpts;

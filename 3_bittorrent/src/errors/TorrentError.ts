@@ -80,9 +80,9 @@ export const ErrorFactory = {
         });
     },
 
-    active_piece: (code: PieceErrorCode, message: string, context?: Record<string, unknown>) => {
+    piece_state: (code: PieceErrorCode, message: string, context?: Record<string, unknown>) => {
         return new TorrentError({
-            domain: 'ACTIVE_PIECE',
+            domain: 'PIECE_STATE',
             code,
             message,
             context
