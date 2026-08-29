@@ -1,6 +1,9 @@
 import { EventEmitter } from "node:stream";
-//import { computeSha1Hash } from '../identity/computeHash.js';
 import { PieceManagerConfig, ActivePiece } from "./types.js";
+import { ErrorFactory } from "../errors/TorrentError.js";
+import { computeSha1Hash } from "../identity/computeHash.js";
+
+const BLOCK_SIZE = 16384; // 16 KiB standard BitTorrent block size
 
 export class PieceManager extends EventEmitter {
     pieceLength: number;
@@ -9,11 +12,11 @@ export class PieceManager extends EventEmitter {
     isMultiFile: boolean;
     pieceCount: number;
     lastPieceLength: number;
-    targetPieceIdx?: number;
-    downloadedBytes: number;
-    pieceBuffer?: Buffer;
-    clientBitfield?: Buffer;
-    private activePieces: Map<number, ActivePiece>
+
+    totalVerifiedBytes: number;
+    clientBitfield: Buffer;
+
+    private activePieces: Map<number, ActivePiece>;
 
     constructor({
         pieceLength,
@@ -28,38 +31,88 @@ export class PieceManager extends EventEmitter {
         this.totalLength = totalLength;
         this.isMultiFile = isMultiFile;
         this.pieceCount = pieceCount;
-        this.targetPieceIdx = undefined;
-        this.downloadedBytes = 0;
-        this.pieceBuffer = undefined;
-        this.clientBitfield = undefined;
         this.lastPieceLength = (totalLength % pieceLength) || pieceLength;
+
+        this.activePieces = new Map();
+        this.totalVerifiedBytes = 0;
+
+        const bitfieldSize = Math.ceil(pieceCount / 8);
+        this.clientBitfield = Buffer.alloc(bitfieldSize, 0);
     }
 
-}
-
-/**
-    findNeeded() {
-        for (let byteIdx = 0; byteIdx < this.peerBitfield.length; byteIdx++) {
-            const peerByte = this.peerBitfield[byteIdx];
-            const myByte = this.bitfield ? this.bitfield[byteIdx] : 0;
-            // Since Bits are form 7->0
-            for (let bit = 7; bit >= 0; bit--) {
-                const pieceIndex = byteIdx * 8 + (7 - bit);
-                if (pieceIndex >= this.pieceCount) break;
-
-                // check the piece using bit mask
-                const peerHas = (peerByte >> bit) & 1;
-                const iHave = (myByte >> bit) & 1;
-                if (peerHas && !iHave) return pieceIndex;
-            }
+    acceptBlock(pieceIdx: number, begin: number, block: Buffer): void {
+        if (pieceIdx < 0 || pieceIdx >= this.pieceCount) {
+            throw ErrorFactory.piece_state('INVALID_PIECE_INDEX', "pieceIndex is out of bounds", { pieceIdx });
         }
-        return null;
+
+        const pieceSize = pieceIdx === this.pieceCount - 1 ? this.lastPieceLength : this.pieceLength;
+        
+        // Boundary Check
+        if (begin < 0 || begin >= pieceSize || (begin + block.length) > pieceSize) {
+            throw ErrorFactory.peer_state('INVALID_BEGIN', 'BEGIN offset or length exceeds piece boundary', { begin, length: block.length });
+        }
+
+        // Overlap & Alignment Invariant
+        if (begin % BLOCK_SIZE !== 0) {
+            throw ErrorFactory.peer_state('UNALIGNED_BLOCK', 'Block offset is not aligned to 16 KiB boundary', { begin });
+        }
+
+        const expectedBlockLength = Math.min(BLOCK_SIZE, pieceSize - begin);
+        if (block.length !== expectedBlockLength) {
+             throw ErrorFactory.peer_state('INVALID_BLOCK_SIZE', 'Block length does not match standard 16 KiB or final remainder', { expected: expectedBlockLength, actual: block.length });
+        }
+
+        // Ignore blocks for pieces we have already verified and persisted
+        if (this.hasPiece(pieceIdx)) return;
+
+        if (!this.activePieces.has(pieceIdx)) {
+            this.activePieces.set(pieceIdx, {
+                buffer: Buffer.alloc(pieceSize),
+                downloadedBytes: 0,
+                receivedBlocks: new Set()
+            });
+        }
+
+        const active = this.activePieces.get(pieceIdx)!; 
+
+        // Prevent duplicate blocks (overlap is impossible due to alignment invariant)
+        if (active.receivedBlocks.has(begin)) return;
+
+        block.copy(active.buffer, begin);
+        active.receivedBlocks.add(begin);
+        active.downloadedBytes += block.length;
+
+        if (active.downloadedBytes === pieceSize) {
+            this.verifyPiece(pieceIdx, active.buffer, pieceSize);
+        }
     }
 
-    verifyPieceHash() {
-        const idx = this.targetPieceIdx;
-        const pieceHash = computeSha1Hash(this.pieceBuffer);
-
-        return this.pieceHashes[idx].equals(pieceHash);
+    hasPiece(idx: number): boolean {
+        const byteIdx = Math.floor(idx / 8);
+        const bitOffset = 7 - (idx % 8);
+        return (this.clientBitfield[byteIdx] & (1 << bitOffset)) !== 0;
     }
-**/
+
+    private verifyPiece(idx: number, buf: Buffer, pieceSize: number): void {
+        const bufHash = computeSha1Hash(buf);
+
+        if (this.pieceHashes[idx].equals(bufHash)) {
+            // Mark in bitfield
+            const byteIdx = Math.floor(idx / 8);
+            const bitOffset = 7 - (idx % 8);
+            this.clientBitfield[byteIdx] |= (1 << bitOffset);
+            
+            // Increment global progress only on successful verification
+            this.totalVerifiedBytes += pieceSize;
+            
+            // Delegate disk I/O to a separate Storage component
+            this.emit('piece_verified', { index: idx, buffer: buf });
+        } else {
+            // Notify scheduler that the piece failed so it can be re-queued
+            this.emit('piece_verification_failed', { index: idx });
+        }
+        
+        // State Transition: Clean up regardless of success or failure.
+        this.activePieces.delete(idx);
+    }
+}

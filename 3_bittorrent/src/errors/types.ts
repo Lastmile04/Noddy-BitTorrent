@@ -39,6 +39,12 @@ export type PeerStateErrorCode =
     | 'INVALID_BITFIELD'
     | 'PEER_NOT_READY';
 
+export type PieceErrorCode =
+    | 'INVALID_ACTIVE_PIECE'
+    | 'INVALID_PIECE_INDEX'
+    | 'INVALID_BEGIN'
+    | 'UNALIGNED_BLOCK';
+
 export type SystemErrorCode = 'UNHANDLED_EXCEPTION';
 
 export type AppErrorCode =
@@ -47,7 +53,8 @@ export type AppErrorCode =
     | TrackerErrorCode
     | SystemErrorCode
     | SocketErrorCode
-    | PeerStateErrorCode;
+    | PeerStateErrorCode
+    | PieceErrorCode;
 
 export type DomainOpts =
     | 'CODEC'
@@ -55,7 +62,8 @@ export type DomainOpts =
     | 'TRACKER'
     | 'SYSTEM'
     | 'SOCKET'
-    | 'PEER_STATE';
+    | 'PEER_STATE'
+    | 'PIECE_STATE';
 
 export interface BaseErrorOpts {
     domain: DomainOpts;

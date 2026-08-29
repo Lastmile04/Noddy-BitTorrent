@@ -5,7 +5,8 @@ import {
     NetworkErrorCode,
     PeerStateErrorCode,
     SocketErrorCode,
-    TrackerErrorCode
+    TrackerErrorCode,
+    PieceErrorCode
 } from "./types.js";
 
 class TorrentError extends Error {
@@ -73,6 +74,15 @@ export const ErrorFactory = {
     peer_state: (code: PeerStateErrorCode, message: string, context?: Record<string, unknown>) => {
         return new TorrentError({
             domain: 'PEER_STATE',
+            code,
+            message,
+            context
+        });
+    },
+
+    piece_state: (code: PieceErrorCode, message: string, context?: Record<string, unknown>) => {
+        return new TorrentError({
+            domain: 'PIECE_STATE',
             code,
             message,
             context
