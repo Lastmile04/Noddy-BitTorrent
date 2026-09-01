@@ -2,8 +2,7 @@ import EventEmitter from "node:events";
 import * as net from 'net';
 import { HandshakeResult, PeerConfig, PeerState, BT_PROTOCOL_LEN, BT_PROTOCOL_BUFFER, PeerMessage, RequestState } from "./types.js";
 import { ErrorFactory } from "../errors/TorrentError.js";
-import { LifecycleStateOpts, SocketErrorCode } from "../errors/types.js";
-
+import { LifecycleStateOpts } from "./types.js";
 export class BitTorrentPeer extends EventEmitter {
 
     remotePeerState: PeerState;
@@ -26,7 +25,16 @@ export class BitTorrentPeer extends EventEmitter {
     MAX_FRAME_SIZE: number;
     private outstandingRequests: Map<string, RequestState>;
 
-    constructor({ socket, peer, peerId, infoHash, pieceLength, totalLength, pieceCount }: PeerConfig) {
+    constructor({
+        socket,
+        peer,
+        peerId,
+        infoHash,
+        pieceLength,
+        totalLength,
+        pieceCount
+    }: PeerConfig) {
+
         super();
         this.socket = socket;
         this.peerId = peerId;
@@ -679,6 +687,10 @@ export class BitTorrentPeer extends EventEmitter {
             this.emit("request_dropped", requestState);
         }
         this.outstandingRequests.clear();
+    }
+
+    public inflightRequestCount(): number {
+        return this.outstandingRequests.size;
     }
 
     private updateRemoteBitfield(pieceIdx: number): void {

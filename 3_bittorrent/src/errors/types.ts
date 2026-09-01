@@ -73,11 +73,4 @@ export interface BaseErrorOpts {
     cause?: unknown;
     context?: Record<string, unknown>;
 }
-
-export type LifecycleStateOpts =
-    | 'NEW'
-    | 'CONNECTING'
-    | 'CONNECTED'
-    | 'READY'
-    | 'CLOSED'
-    | 'FAILED';
+ 

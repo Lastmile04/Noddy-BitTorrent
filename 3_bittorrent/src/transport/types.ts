@@ -54,6 +54,14 @@ export interface RequestState {
     requestedAt: number;
 }
 
+export type LifecycleStateOpts =
+    | 'NEW'
+    | 'CONNECTING'
+    | 'CONNECTED'
+    | 'READY'
+    | 'CLOSED'
+    | 'FAILED';
+
 // protocols.ts - Extracted configuration and constraints
 export const BT_PROTOCOL_LEN = 19;
 const BT_PROTOCOL_STR = "BitTorrent protocol" as const;
