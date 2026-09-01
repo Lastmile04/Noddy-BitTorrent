@@ -47,6 +47,13 @@ export interface PeerMessage {
     block?: Buffer;
 }
 
+export interface RequestState {
+    index: number;
+    begin: number;
+    length: number;
+    requestedAt: number;
+}
+
 // protocols.ts - Extracted configuration and constraints
 export const BT_PROTOCOL_LEN = 19;
 const BT_PROTOCOL_STR = "BitTorrent protocol" as const;

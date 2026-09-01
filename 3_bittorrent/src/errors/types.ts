@@ -43,6 +43,7 @@ export type PieceErrorCode =
     | 'INVALID_ACTIVE_PIECE'
     | 'INVALID_PIECE_INDEX'
     | 'INVALID_BEGIN'
+    | 'INVALID_BLOCK_SIZE'
     | 'UNALIGNED_BLOCK';
 
 export type SystemErrorCode = 'UNHANDLED_EXCEPTION';
