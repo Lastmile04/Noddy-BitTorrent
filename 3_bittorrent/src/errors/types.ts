@@ -37,6 +37,7 @@ export type PeerStateErrorCode =
     | 'INVALID_PIECE_INDEX'
     | 'INVALID_HAVE'
     | 'INVALID_BITFIELD'
+    | 'PEER_UNAVAILABLE' 
     | 'PEER_NOT_READY';
 
 export type PieceErrorCode =

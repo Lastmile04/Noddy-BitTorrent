@@ -897,6 +897,27 @@ export class BitTorrentPeer extends EventEmitter {
         this.sendPacket(7, payload);
     }
 
+    public destroy(err?: Error): void {
+        if (this.lifecycleState === 'CLOSED' || this.lifecycleState === 'FAILED') return;
+
+        if (err) {
+            this.fail(err);
+            return;
+        }
+
+        this.lifecycleState = 'CLOSED';
+        this.dropOutstandingRequests();
+        this.cleanup();
+
+        if (this.socket && !this.socket.destroyed) {
+            this.socket.destroy();
+        }
+
+        this.emit('SOCKET_CLOSED', {
+            peer: `${this.remotePeerState.ip}:${this.remotePeerState.port}`
+        });
+    }
+
     public cancel(index: number, begin: number, length: number): void {
         if (index < 0 || index >= this.pieceCount) {
             throw ErrorFactory.peer_state(

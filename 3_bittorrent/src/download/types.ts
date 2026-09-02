@@ -39,16 +39,14 @@ export interface DownloadSession {
 }
 
 export interface PeerRecord {
-    readonly key: string;                // Endpoint identity (ip:port)
-    readonly peerId?: Buffer;            // Protocol identity (handshaken remote 20-byte ID)
-    readonly isEligible: boolean;        // Helper combining: ready state, socket unchoked, not destroying
-    readonly isChoked: boolean;          // Peer is currently choking us
-    readonly inflightRequests: number;  // Current size of outstanding requests map
-    readonly downloadRate: number;       // Rolling bytes/sec speed metric
-    /**
-     * Efficiently queries if this peer possesses a specific piece index.
-     * Delegates directly to BitTorrentPeer's bitfield buffer.
-     */
+    readonly key: string;
+    readonly peerId?: Buffer;
+    readonly lifecycleState: LifecycleStateOpts;
+    readonly isChoked: boolean;          // Remote peer is choking us
+    readonly amInterested: boolean;      // We have expressed interest in remote peer
+    readonly peerInterested: boolean;    // Remote peer has expressed interest in us
+    readonly inflightRequests: number;
+    readonly downloadRate: number;
     hasPiece(pieceIndex: number): boolean;
 }
 
@@ -60,3 +58,24 @@ export interface PeerPoolConfig {
     pieceCount: number
     maxPeers?: number
 }
+
+export interface BlockEventReceived {
+    peerKey: string
+    index: number
+    begin: number
+    block: Buffer
+}
+
+export interface PeerBlockPayload {
+    index: number
+    begin: number
+    block: Buffer
+}
+
+export interface PoolListeners {
+    block: (data: PeerBlockPayload) => void,
+    error: (err?: Error) => void,
+    closed: () => void
+}
+
+

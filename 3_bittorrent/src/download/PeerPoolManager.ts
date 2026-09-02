@@ -1,10 +1,12 @@
 import EventEmitter from "node:events";
-import { BitTorrentPeer } from "../transport/BitTorrentPeer.js";
-import { PeerPoolConfig, PeerRecord } from "./types.js";
 import * as net from 'net';
+import { BitTorrentPeer } from "../transport/BitTorrentPeer.js";
+import { BlockEventReceived, PeerBlockPayload, PeerPoolConfig, PeerRecord, PoolListeners } from "./types.js";
+import { ErrorFactory } from "../errors/TorrentError.js";
 
 export class PeerPoolManager extends EventEmitter {
     private peers: Map<string, BitTorrentPeer>;
+    private poolListeners: Map<string, PoolListeners>;
     private readonly config: PeerPoolConfig;
     private readonly maxPeers: number;
 
@@ -13,12 +15,12 @@ export class PeerPoolManager extends EventEmitter {
         this.config = config;
         this.maxPeers = config.maxPeers ?? 50;
         this.peers = new Map();
+        this.poolListeners = new Map();
     }
 
-    connectToPeer(ip: string, port: number): void {
+    public connectToPeer(ip: string, port: number): void {
         const key = `${ip}:${port}`;
 
-        // Prevent duplicate connection and respect the pool population cap
         if (this.peers.has(key) || this.peers.size >= this.maxPeers) return;
 
         const peer = new BitTorrentPeer({
@@ -30,29 +32,132 @@ export class PeerPoolManager extends EventEmitter {
             totalLength: this.config.totalLength,
             pieceCount: this.config.pieceCount,
         });
+
         this.peers.set(key, peer);
         this.attachPeerListeners(key, peer);
 
-        peer.connect().catch(() => { });
+        peer.connect().catch((err) => {
+            this.unregisterPeer(key, err);
+        });
     }
 
-    public getEligiblePeers(): PeerRecord[] {
-        const record: PeerRecord[] = [];
+    // QUERIES
+
+    public getPeerRecords(): PeerRecord[] {
+        const records: PeerRecord[] = [];
 
         for (const [key, peer] of this.peers.entries()) {
-            if (peer.lifecycleState !== 'READY' || peer.remotePeerState.peerChoking) continue;
+            if (peer.lifecycleState === 'FAILED' || peer.lifecycleState === 'CLOSED') continue;
 
-            record.push({
+            records.push({
                 key,
                 peerId: peer.remotePeerState.remotePeerId,
-                isEligible: true,
+                lifecycleState: peer.lifecycleState,
                 isChoked: peer.remotePeerState.peerChoking,
+                amInterested: peer.remotePeerState.amInterested,
+                peerInterested: peer.remotePeerState.peerInterested,
                 inflightRequests: peer.inflightRequestCount(),
                 downloadRate: peer.remotePeerState.downloadRate,
                 hasPiece: (index: number) => this.checkPeerBitfield(peer, index),
             });
         }
-        return record;
+        return records;
+    }
+
+    // COMMANDS
+
+    /** Strict: Requires an active peer */
+    public requestBlocks(key: string, index: number, begin: number, length: number): void {
+        const peer = this.getOrThrow(key);
+
+        if (peer.lifecycleState !== 'READY') {
+            throw ErrorFactory.peer_state(
+                'PEER_NOT_READY',
+                `Lifecycle state is ${peer.lifecycleState}, expected READY`,
+                { key }
+            );
+        }
+
+        if (peer.remotePeerState.peerChoking) {
+            throw ErrorFactory.peer_state(
+                'INVALID_REQUEST',
+                'Cannot request blocks while choked',
+                { key }
+            );
+        }
+
+        peer.request(index, begin, length);
+    }
+
+    /** Strict: Requires an active peer */
+    public expressInterest(key: string): void {
+        const peer = this.getOrThrow(key);
+        if (peer.lifecycleState !== 'READY') {
+            throw ErrorFactory.peer_state(
+                'PEER_NOT_READY',
+                `Lifecycle state is ${peer.lifecycleState}, expected READY`,
+                { key }
+            );
+        }
+        peer.interested();
+    }
+
+    /** Idempotent Cleanup: Safe no-op if peer dropped */
+    public cancelRequest(key: string, index: number, begin: number, length: number): void {
+        const peer = this.peers.get(key);
+        if (!peer || peer.lifecycleState !== 'READY') return;
+        peer.cancel(index, begin, length);
+    }
+
+    /** Idempotent Cleanup: Safe no-op if peer dropped */
+    public revokeInterest(key: string): void {
+        const peer = this.peers.get(key);
+        if (!peer || peer.lifecycleState !== 'READY') return;
+        peer.uninterested();
+    }
+
+    // LIFECYCLE & TEARDOWN
+
+    public unregisterPeer(key: string, reason?: Error): void {
+        const peer = this.peers.get(key);
+        if (!peer) return;
+
+        const wasReady = peer.lifecycleState === 'READY';
+
+        // Detach ONLY pool listeners (prevents nuking BitTorrentPeer internal handlers)
+        this.detachPeerListeners(key, peer);
+        this.peers.delete(key);
+
+        // Explicit socket connection termination
+        peer.destroy();
+
+        // Contextual lifecycle events for downstream consumers
+        if (wasReady) {
+            this.emit('peer_disconnected', { key, reason });
+        } else {
+            this.emit('peer_failed', { key, reason });
+        }
+    }
+
+    public shutdown(): void {
+        for (const key of Array.from(this.peers.keys())) {
+            this.unregisterPeer(key, new Error('Pool shutting down'));
+        }
+        this.removeAllListeners();
+    }
+
+    // PRIVATE HELPERS
+
+    private getOrThrow(key: string): BitTorrentPeer {
+        const peer = this.peers.get(key);
+        if (!peer) {
+            throw ErrorFactory.peer_state(
+                'PEER_UNAVAILABLE',
+                `Peer ${key} is no longer active in the pool.`,
+                { key }
+            );
+        }
+        return peer;
     }
 
     private checkPeerBitfield(peer: BitTorrentPeer, index: number): boolean {
@@ -61,8 +166,6 @@ export class PeerPoolManager extends EventEmitter {
 
         const byteIdx = Math.floor(index / 8);
         const byte = bitfield[byteIdx];
-
-        // Handles out-of-bounds & satisfies strict TypeScript undefined checks
         if (byte === undefined) return false;
 
         const bitOffset = 7 - (index % 8);
@@ -70,16 +173,33 @@ export class PeerPoolManager extends EventEmitter {
     }
 
     private attachPeerListeners(key: string, peer: BitTorrentPeer): void {
-        peer.on('block', (data) => this.emit('block', data));
-
-        const cleanup = () => {
-            if (this.peers.has(key)) {
-                this.peers.delete(key);
-                this.emit('peer_disconnected', key);
-            }
+        const onBlock = (data: PeerBlockPayload) => {
+            const event: BlockEventReceived = {
+                peerKey: key,
+                index: data.index,
+                begin: data.begin,
+                block: data.block,
+            };
+            this.emit('block', event);
         };
+        const onError = (err?: Error) => this.unregisterPeer(key, err);
+        const onClosed = () => this.unregisterPeer(key);
 
-        peer.on('error', cleanup);
-        peer.on('SOCKET_CLOSED', cleanup);
+        peer.on('block', onBlock);
+        peer.on('error', onError);
+        peer.on('SOCKET_CLOSED', onClosed);
+
+        this.poolListeners.set(key, { block: onBlock, error: onError, closed: onClosed });
+    }
+
+    private detachPeerListeners(key: string, peer: BitTorrentPeer): void {
+        const bound = this.poolListeners.get(key);
+        if (!bound) return;
+
+        peer.off('block', bound.block);
+        peer.off('error', bound.error);
+        peer.off('SOCKET_CLOSED', bound.closed);
+
+        this.poolListeners.delete(key);
     }
 }
