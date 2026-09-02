@@ -24,9 +24,11 @@ export async function callTracker(handler, urlObj, trackerUrl, params) {
 
     // handler has a refrence of udpPeer function and after if block we use that to call the function
     if (handler === udpPeer) {
-        // Now the call is clean and order-independent
+        //  the call is clean and order-independent
         result = await handler({ tracker, torrent, session });
-    } else result = await handler(trackerUrl, params);
+    } else {
+        result = await handler(trackerUrl, params);
+    }
 
 
     return {

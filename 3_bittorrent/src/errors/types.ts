@@ -37,12 +37,14 @@ export type PeerStateErrorCode =
     | 'INVALID_PIECE_INDEX'
     | 'INVALID_HAVE'
     | 'INVALID_BITFIELD'
+    | 'PEER_UNAVAILABLE' 
     | 'PEER_NOT_READY';
 
 export type PieceErrorCode =
     | 'INVALID_ACTIVE_PIECE'
     | 'INVALID_PIECE_INDEX'
     | 'INVALID_BEGIN'
+    | 'INVALID_BLOCK_SIZE'
     | 'UNALIGNED_BLOCK';
 
 export type SystemErrorCode = 'UNHANDLED_EXCEPTION';
@@ -72,11 +74,4 @@ export interface BaseErrorOpts {
     cause?: unknown;
     context?: Record<string, unknown>;
 }
-
-export type LifecycleStateOpts =
-    | 'NEW'
-    | 'CONNECTING'
-    | 'CONNECTED'
-    | 'READY'
-    | 'CLOSED'
-    | 'FAILED';
+ 
