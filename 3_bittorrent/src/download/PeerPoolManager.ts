@@ -64,6 +64,9 @@ export class PeerPoolManager extends EventEmitter {
         return records;
     }
 
+    public getDownloadEligiblePeers(){}
+
+
     // COMMANDS
 
     /** Strict: Requires an active peer */

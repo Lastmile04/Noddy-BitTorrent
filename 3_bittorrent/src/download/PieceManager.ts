@@ -40,7 +40,9 @@ export class PieceManager extends EventEmitter {
         this.clientBitfield = Buffer.alloc(bitfieldSize, 0);
     }
 
-    acceptBlock(pieceIdx: number, begin: number, block: Buffer): void {
+    // QUERIES
+
+    public acceptBlock(pieceIdx: number, begin: number, block: Buffer): void {
         if (pieceIdx < 0 || pieceIdx >= this.pieceCount) {
             throw ErrorFactory.piece_state('INVALID_PIECE_INDEX', "pieceIndex is out of bounds", { pieceIdx });
         }
@@ -87,7 +89,28 @@ export class PieceManager extends EventEmitter {
         }
     }
 
-    hasPiece(idx: number): boolean {
+    public findNeeded(): number[] {
+        const needed: number[] = [];
+
+        for (let byteIdx = 0; byteIdx < this.clientBitfield.length; byteIdx++) {
+            for (let bitOffset = 0; bitOffset < 8; bitOffset++) {
+                const pieceIndex = (byteIdx * 8) + bitOffset;
+
+                if (pieceIndex >= this.pieceCount) break;
+
+                const maskedBit = 1 << (7 - bitOffset);
+
+                if ((this.clientBitfield[byteIdx] & maskedBit) === 0) {
+                    needed.push(pieceIndex);
+                }
+            }
+        }
+        return needed;
+    }
+
+    // HELPERS
+
+    private hasPiece(idx: number): boolean {
         const byteIdx = Math.floor(idx / 8);
         const bitOffset = 7 - (idx % 8);
         return (this.clientBitfield[byteIdx] & (1 << bitOffset)) !== 0;
