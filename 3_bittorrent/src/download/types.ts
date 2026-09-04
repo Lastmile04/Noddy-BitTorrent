@@ -102,7 +102,8 @@ export interface BlockRequest {
     length: number
 }
 
-export type SchedulerState = 'RANDOM_FIRST' | 'RAREST_FIRST' | 'ENDGAME' | 'COMPLETE';
+export type DownloadMode = 'ACTIVE' | 'ENDGAME' | 'COMPLETE';
+export type PieceStrategy = 'RANDOM_FIRST' | 'RAREST_FIRST';
 
 export interface EligiblePeerCandidate {
     peer: PeerRecord;

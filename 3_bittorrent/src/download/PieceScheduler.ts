@@ -1,5 +1,5 @@
 import EventEmitter from "node:events";
-import { BlockRequest, EligiblePeerCandidate, PeerRecord, PieceSchedulerConfig, SchedulerState } from "./types.js";
+import { BlockRequest, DownloadMode, EligiblePeerCandidate, PeerRecord, PieceSchedulerConfig, SchedulerState } from "./types.js";
 import { PieceManager } from "./PieceManager.js";
 import { PeerPoolManager } from "./PeerPoolManager.js";
 
@@ -10,9 +10,10 @@ export class PieceScheduler extends EventEmitter {
     pieceManager: PieceManager;
     peerPoolManager: PeerPoolManager;
     queuedRequests: BlockRequest[];
-    schedulerState: SchedulerState;
     private inflightRequestMap: Map<string, BlockRequest[]>;
     private isRunning: boolean;
+    private mode: DownloadMode;
+    private strategy: PieceStrategy;
 
     private readonly MAX_INFLIGHT_PER_PEER = 5;
 
@@ -32,8 +33,9 @@ export class PieceScheduler extends EventEmitter {
         this.peerPoolManager = peerPoolManager;
         this.queuedRequests = [];
         this.inflightRequestMap = new Map();
-        this.schedulerState = 'RANDOM_FIRST';
         this.isRunning = false;
+        this.mode = 'ACTIVE';
+        this.strategy = 'RANDOM_FIRST';
     }
 
 
@@ -51,28 +53,18 @@ export class PieceScheduler extends EventEmitter {
         const needed = this.pieceManager.findNeeded();
         this.updateSchedulerState(needed.length);
 
-        if (this.schedulerState === 'COMPLETE') {
-            this.isRunning = false;
-            this.emit('complete');
-            return;
+        if (this.queuedRequests.length === 0 && needed.length > 0) {
+
+            const activePeers = this.peerPoolManager.getPeerRecords();
+            const eligibleCandidates = this.filterEligiblePeers(activePeers, needed);
+
+            if (eligibleCandidates.length === 0) return;
+
+            const targetPiece = this.selectPiece(eligibleCandidates);
+            this.queuedRequests.push(...this.generateBlockRequest(targetPiece));
         }
 
-        const activePeers = this.peerPoolManager.getPeerRecords();
-        const eligibleCandidates = this.filterEligiblePeers(activePeers, needed);
-
-        if (eligibleCandidates.length === 0) return;
-
-        switch (this.schedulerState) {
-            case 'RANDOM_FIRST':
-                this.schedulerRandomFirst(eligibleCandidates);
-                break;
-            case 'RAREST_FIRST':
-                this.schedulerRarestFirst(eligibleCandidates);
-                break;
-            case 'ENDGAME':
-                this.schedulerEndgame(eligibleCandidates);
-                break;
-        }
+        this.dispatchQueuedRequests();
     }
 
     private filterEligiblePeers(records: PeerRecord[], neededPieces: number[]): EligiblePeerCandidate[] {
@@ -81,7 +73,9 @@ export class PieceScheduler extends EventEmitter {
 
             if (record.lifecycleState !== 'READY') continue;
             if (record.isChoked) continue;
-            if (record.inflightRequests >= this.MAX_INFLIGHT_PER_PEER) continue;
+
+            const inflightCount = this.inflightRequestMap.get(record.key)?.length ?? 0;
+            if (inflightCount >= this.MAX_INFLIGHT_PER_PEER) continue;
 
             const availablePieces = neededPieces.filter(pieceIdx => record.hasPiece(pieceIdx));
             if (availablePieces.length > 0) {
@@ -95,9 +89,24 @@ export class PieceScheduler extends EventEmitter {
     }
 
     private updateSchedulerState(length: number): void { };
-    private schedulerRandomFirst(eligibleCandidates: EligiblePeerCandidate[]): void { };
-    private schedulerRarestFirst(eligibleCandidates: EligiblePeerCandidate[]): void { };
+
+    private selectPiece(candidates: EligiblePeerCandidate[]): number {
+        switch (this.strategy) {
+            case 'RANDOM_FIRST':
+                return this.schedulerRandomFirst(candidates);
+            case 'RAREST_FIRST':
+                return this.schedulerRarestFirst(candidates);
+            default:
+                return candidates[0].availablePieces[0]; // Fallback
+        }
+    }
+
+    private schedulerRandomFirst(eligibleCandidates: EligiblePeerCandidate[]): number { };
+    private schedulerRarestFirst(eligibleCandidates: EligiblePeerCandidate[]): number { };
     private schedulerEndgame(eligibleCandidates: EligiblePeerCandidate[]): void { };
+    private generateBlockRequest(pieceIdx: number): BlockRequest[] { };
+    private handlePeerDisconnect(peerKey: string): void { };
+    private dispatchQueuedRequests(): void { };
 
     private attachListeners(): void {
         // // Re-run schedule tick whenever peer pipeline space opens up or state changes
