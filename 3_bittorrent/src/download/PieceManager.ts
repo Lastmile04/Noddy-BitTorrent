@@ -16,6 +16,7 @@ export class PieceManager extends EventEmitter {
     totalVerifiedBytes: number;
     clientBitfield: Buffer;
 
+    private missingPieces: Set<number>;
     private activePieces: Map<number, ActivePiece>;
 
     constructor({
@@ -38,6 +39,10 @@ export class PieceManager extends EventEmitter {
 
         const bitfieldSize = Math.ceil(pieceCount / 8);
         this.clientBitfield = Buffer.alloc(bitfieldSize, 0);
+
+        this.missingPieces = new Set(
+            Array.from({ length: pieceCount }, (_, i) => i)
+        );
     }
 
     // QUERIES
@@ -90,22 +95,7 @@ export class PieceManager extends EventEmitter {
     }
 
     public findNeeded(): number[] {
-        const needed: number[] = [];
-
-        for (let byteIdx = 0; byteIdx < this.clientBitfield.length; byteIdx++) {
-            for (let bitOffset = 0; bitOffset < 8; bitOffset++) {
-                const pieceIndex = (byteIdx * 8) + bitOffset;
-
-                if (pieceIndex >= this.pieceCount) break;
-
-                const maskedBit = 1 << (7 - bitOffset);
-
-                if ((this.clientBitfield[byteIdx] & maskedBit) === 0) {
-                    needed.push(pieceIndex);
-                }
-            }
-        }
-        return needed;
+        return Array.from(this.missingPieces);
     }
 
     // HELPERS
@@ -124,6 +114,7 @@ export class PieceManager extends EventEmitter {
             const byteIdx = Math.floor(idx / 8);
             const bitOffset = 7 - (idx % 8);
             this.clientBitfield[byteIdx] |= (1 << bitOffset);
+            this.missingPieces.delete(idx);
 
             // Increment global progress only on successful verification
             this.totalVerifiedBytes += pieceSize;
