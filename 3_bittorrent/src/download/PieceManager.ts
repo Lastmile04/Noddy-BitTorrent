@@ -24,7 +24,8 @@ export class PieceManager extends EventEmitter {
         pieceHashes,
         totalLength,
         isMultiFile,
-        pieceCount
+        pieceCount,
+        initialVerifiedPieces = [] // [] to prevent type error & for resumability
     }: PieceManagerConfig) {
         super();
         this.pieceHashes = pieceHashes;
@@ -43,6 +44,10 @@ export class PieceManager extends EventEmitter {
         this.missingPieces = new Set(
             Array.from({ length: pieceCount }, (_, i) => i)
         );
+
+        for (const idx of initialVerifiedPieces) {
+            this.markPieceVerifiedLocally(idx);
+        }
     }
 
     // QUERIES
@@ -69,7 +74,7 @@ export class PieceManager extends EventEmitter {
             throw ErrorFactory.piece_state('INVALID_BLOCK_SIZE', 'Block length does not match standard 16 KiB or final remainder', { expected: expectedBlockLength, actual: block.length });
         }
 
-        // Ignore blocks for pieces we have already verified and persisted
+        // Ignore blocks for pieces we have already verified locally 
         if (this.hasPiece(pieceIdx)) return;
 
         if (!this.activePieces.has(pieceIdx)) {
@@ -98,28 +103,54 @@ export class PieceManager extends EventEmitter {
         return Array.from(this.missingPieces);
     }
 
+    public getMissingBlocks(pieceIdx: number): number[] {
+
+        if (pieceIdx < 0 || pieceIdx >= this.pieceCount) {
+            throw ErrorFactory.piece_state('INVALID_PIECE_INDEX', "pieceIndex is out of bounds", { pieceIdx });
+        }
+
+        if (this.hasPiece(pieceIdx)) return [];
+
+        const pieceSize = pieceIdx === this.pieceCount - 1 ? this.lastPieceLength : this.pieceLength;
+        const active = this.activePieces.get(pieceIdx);
+        const missingOffset: number[] = [];
+
+        for (let offset = 0; offset < pieceSize; offset += BLOCK_SIZE) {
+            if (!active || !active.receivedBlocks.has(offset)) missingOffset.push(offset);
+        }
+        return missingOffset;
+    }
+
     // HELPERS
 
-    private hasPiece(idx: number): boolean {
+    public hasPiece(idx: number): boolean {
         const byteIdx = Math.floor(idx / 8);
         const bitOffset = 7 - (idx % 8);
         return (this.clientBitfield[byteIdx] & (1 << bitOffset)) !== 0;
     }
 
+    private markPieceVerifiedLocally(idx: number): void {
+
+        if (idx < 0 || idx >= this.pieceCount) {
+            throw ErrorFactory.piece_state('INVALID_PIECE_INDEX', "pieceIndex is out of bounds", { idx });
+        }
+
+        const byteIdx = Math.floor(idx / 8);
+        const bitOffset = 7 - (idx % 8);
+        this.clientBitfield[byteIdx] |= (1 << bitOffset);
+
+        if (this.missingPieces.has(idx)) {
+            this.missingPieces.delete(idx);
+            this.totalVerifiedBytes += (idx === this.pieceCount - 1) ? this.lastPieceLength : this.pieceLength;
+        }
+    }
+
+
     private verifyPiece(idx: number, buf: Buffer, pieceSize: number): void {
         const bufHash = computeSha1Hash(buf);
 
         if (this.pieceHashes[idx].equals(bufHash)) {
-            // Mark in bitfield
-            const byteIdx = Math.floor(idx / 8);
-            const bitOffset = 7 - (idx % 8);
-            this.clientBitfield[byteIdx] |= (1 << bitOffset);
-            this.missingPieces.delete(idx);
-
-            // Increment global progress only on successful verification
-            this.totalVerifiedBytes += pieceSize;
-
-            // Delegate disk I/O to a separate Storage component
+            this.markPieceVerifiedLocally(idx);
             this.emit('piece_verified', { index: idx, buffer: buf });
         } else {
             // Notify scheduler that the piece failed so it can be re-queued

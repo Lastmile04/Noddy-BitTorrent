@@ -42,6 +42,7 @@ export interface PieceManagerConfig {
     isMultiFile: boolean
     pieceCount: number
     lastPieceLength: number
+    initialVerifiedPieces?: number[];
 }
 
 // PEER_POOL_MANAGER
