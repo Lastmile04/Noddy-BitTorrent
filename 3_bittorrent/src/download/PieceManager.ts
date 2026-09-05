@@ -103,7 +103,7 @@ export class PieceManager extends EventEmitter {
         return Array.from(this.missingPieces);
     }
 
-    public getMissingBlocks(pieceIdx: number): number[] {
+    public getMissingOffsets(pieceIdx: number): number[] {
 
         if (pieceIdx < 0 || pieceIdx >= this.pieceCount) {
             throw ErrorFactory.piece_state('INVALID_PIECE_INDEX', "pieceIndex is out of bounds", { pieceIdx });

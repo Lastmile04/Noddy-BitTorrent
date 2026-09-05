@@ -64,7 +64,7 @@ export class PeerPoolManager extends EventEmitter {
         return records;
     }
 
-    public getDownloadEligiblePeers(){}
+    public getDownloadEligiblePeers() { }
 
 
     // COMMANDS
@@ -88,8 +88,12 @@ export class PeerPoolManager extends EventEmitter {
                 { key }
             );
         }
-
-        peer.request(index, begin, length);
+        try {
+            peer.request(index, begin, length);
+        }
+        catch (err) {
+            throw err;
+        }
     }
 
     /** Strict: Requires an active peer */
