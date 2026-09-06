@@ -71,7 +71,10 @@ export class PieceManager extends EventEmitter {
 
         const expectedBlockLength = Math.min(BLOCK_SIZE, pieceSize - begin);
         if (block.length !== expectedBlockLength) {
-            throw ErrorFactory.piece_state('INVALID_BLOCK_SIZE', 'Block length does not match standard 16 KiB or final remainder', { expected: expectedBlockLength, actual: block.length });
+            throw ErrorFactory.piece_state(
+                'INVALID_BLOCK_SIZE',
+                'Block length does not match standard 16 KiB or final remainder',
+                { expected: expectedBlockLength, actual: block.length });
         }
 
         // Ignore blocks for pieces we have already verified locally 
@@ -95,7 +98,7 @@ export class PieceManager extends EventEmitter {
         active.downloadedBytes += block.length;
 
         if (active.downloadedBytes === pieceSize) {
-            this.verifyPiece(pieceIdx, active.buffer, pieceSize);
+            this.verifyPiece(pieceIdx, active.buffer);
         }
     }
 
@@ -146,7 +149,7 @@ export class PieceManager extends EventEmitter {
     }
 
 
-    private verifyPiece(idx: number, buf: Buffer, pieceSize: number): void {
+    private verifyPiece(idx: number, buf: Buffer): void {
         const bufHash = computeSha1Hash(buf);
 
         if (this.pieceHashes[idx].equals(bufHash)) {

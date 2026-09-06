@@ -17,8 +17,10 @@ export class PieceScheduler extends EventEmitter {
     private isRunning: boolean;
     private mode: DownloadMode;
     private strategy: PieceStrategy;
+    private activePieceIdx: Set<number>;
 
     private readonly MAX_INFLIGHT_PER_PEER = 5;
+    private readonly MAX_CONCURRENT_PIECES = 8;
 
     constructor({
         pieceLength,
@@ -38,6 +40,7 @@ export class PieceScheduler extends EventEmitter {
         this.isRunning = false;
         this.mode = 'ACTIVE';
         this.strategy = 'RANDOM_FIRST';
+        this.activePieceIdx = new Set();
     }
 
 
@@ -55,19 +58,67 @@ export class PieceScheduler extends EventEmitter {
         const needed = this.pieceManager.findNeeded();
         this.updateSchedulerStrategy(needed.length);
 
-        if (this.queuedRequests.length === 0 && needed.length > 0) {
-
-            const activePeers = this.peerPoolManager.getPeerRecords();
-            const eligibleCandidates = this.filterEligiblePeers(activePeers, needed);
-
-            if (eligibleCandidates.length === 0) return;
-
-            const targetPiece = this.selectPiece(eligibleCandidates);
-            this.queuedRequests.push(...this.generateBlockRequest(targetPiece));
+        if (needed.length === 0 && this.activePieceIdx) {
+            this.emit('complete');
+            return;
         }
 
+        // REPLENISH EXISTING ACTIVE PIECES 
+        for (const pieceIdx of Array.from(this.activePieceIdx)) {
+            if (this.pieceManager.hasPiece(pieceIdx)) {
+                this.activePieceIdx.delete(pieceIdx);
+                continue;
+            }
+            const unassignedBlocks = this.getUnassignedBlockForPiece(pieceIdx);
+            if (unassignedBlocks.length > 0) this.queuedRequests.push(...unassignedBlocks);
+        }
+
+        const activePeers = this.peerPoolManager.getPeerRecords();
+
+        // EXPAND ACTIVE PIECES *if below concurrency cap
+        while (this.activePieceIdx.size < this.MAX_CONCURRENT_PIECES && needed.length > 0) {
+            // filter pieces that aren't already active
+            const candidatePieces = needed.filter(idx => !this.activePieceIdx.has(idx));
+            if (candidatePieces.length === 0) break;
+
+            const eligibleCandidates = this.filterEligiblePeers(activePeers, candidatePieces);
+            if (eligibleCandidates.length === 0) break;
+
+            const targetPiece = this.selectPiece(eligibleCandidates);
+            this.activePieceIdx.add(targetPiece);
+
+            const newBlocks = this.getUnassignedBlockForPiece(targetPiece);
+            this.queuedRequests.push(...newBlocks);
+        }
         this.dispatchQueuedRequests();
     }
+
+    private getUnassignedBlockForPiece(pieceIdx: number): BlockRequest[] {
+        const missingOffsets = this.pieceManager.getMissingOffsets(pieceIdx);
+        const pieceSize = pieceIdx === this.pieceCount - 1 ? this.lastPieceLength : this.pieceLength;
+
+        const unassigned: BlockRequest[] = [];
+
+        for (const begin of missingOffsets) {
+            // check if already in queue
+            const isQueued = this.queuedRequests.some(
+                req => req.index === pieceIdx && req.begin === begin
+            );
+            if (isQueued) continue;
+
+            // check if currently in-flight
+            const isInflight = Array.from(this.inflightRequestMap.values()).some(
+                requests => requests.some(
+                    req => req.index === pieceIdx && req.begin === begin
+                )
+            );
+            if (isInflight) continue;
+
+            const length = Math.min(BLOCK_SIZE, pieceSize - begin);
+            unassigned.push({ index: pieceIdx, begin, length });
+        }
+        return unassigned;
+    };
 
     private filterEligiblePeers(records: PeerRecord[], neededPieces: number[]): EligiblePeerCandidate[] {
         const candidates: EligiblePeerCandidate[] = [];
@@ -144,7 +195,7 @@ export class PieceScheduler extends EventEmitter {
         return missingOffsets.map(begin => ({
             index: pieceIdx,
             begin,
-            length: pieceSize
+            length: Math.min(BLOCK_SIZE, pieceSize - begin)
         }));
     };
 
@@ -188,7 +239,7 @@ export class PieceScheduler extends EventEmitter {
     }
 
     private attachListeners(): void {
-        
+
     }
 
 }
