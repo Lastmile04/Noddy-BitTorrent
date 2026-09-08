@@ -106,6 +106,11 @@ export class PieceManager extends EventEmitter {
         return Array.from(this.missingPieces);
     }
 
+    public isNeeded(idx: number): boolean {
+        if (idx < 0 || idx > this.pieceCount) return false;
+        return this.missingPieces.has(idx);
+    }
+
     public getMissingOffsets(pieceIdx: number): number[] {
 
         if (pieceIdx < 0 || pieceIdx >= this.pieceCount) {
@@ -124,6 +129,7 @@ export class PieceManager extends EventEmitter {
         return missingOffset;
     }
 
+
     // HELPERS
 
     public hasPiece(idx: number): boolean {
@@ -133,11 +139,6 @@ export class PieceManager extends EventEmitter {
     }
 
     private markPieceVerifiedLocally(idx: number): void {
-
-        if (idx < 0 || idx >= this.pieceCount) {
-            throw ErrorFactory.piece_state('INVALID_PIECE_INDEX', "pieceIndex is out of bounds", { idx });
-        }
-
         const byteIdx = Math.floor(idx / 8);
         const bitOffset = 7 - (idx % 8);
         this.clientBitfield[byteIdx] |= (1 << bitOffset);
@@ -150,17 +151,18 @@ export class PieceManager extends EventEmitter {
 
 
     private verifyPiece(idx: number, buf: Buffer): void {
-        const bufHash = computeSha1Hash(buf);
+        try {
+            const bufHash = computeSha1Hash(buf);
 
-        if (this.pieceHashes[idx].equals(bufHash)) {
-            this.markPieceVerifiedLocally(idx);
-            this.emit('piece_verified', { index: idx, buffer: buf });
-        } else {
-            // Notify scheduler that the piece failed so it can be re-queued
-            this.emit('piece_verification_failed', { index: idx });
+            if (this.pieceHashes[idx].equals(bufHash)) {
+                this.markPieceVerifiedLocally(idx);
+                this.emit('piece_verified', { index: idx, buffer: buf });
+            } else {
+                this.emit('piece_verification_failed', { index: idx });
+            }
         }
-
-        // State Transition: Clean up regardless of success or failure.
-        this.activePieces.delete(idx);
+        finally {
+            this.activePieces.delete(idx);
+        }
     }
 }

@@ -18,9 +18,10 @@ export class PieceScheduler extends EventEmitter {
     private mode: DownloadMode;
     private strategy: PieceStrategy;
     private activePieceIdx: Set<number>;
+    private hasCompletedInitialPiece: boolean;
 
     private readonly MAX_INFLIGHT_PER_PEER = 5;
-    private readonly MAX_CONCURRENT_PIECES = 8;
+    private readonly MAX_WORKING_SET_PIECES = 8;
 
     constructor({
         pieceLength,
@@ -41,9 +42,8 @@ export class PieceScheduler extends EventEmitter {
         this.mode = 'ACTIVE';
         this.strategy = 'RANDOM_FIRST';
         this.activePieceIdx = new Set();
+        this.hasCompletedInitialPiece = false;
     }
-
-
 
     public start(): void {
         if (this.isRunning) return;
@@ -55,29 +55,30 @@ export class PieceScheduler extends EventEmitter {
     private schedule(): void {
         if (!this.isRunning) return;
 
+        // Invariant: Scheduling pass evaluates against one immutable state snapshot
         const needed = this.pieceManager.findNeeded();
-        this.updateSchedulerStrategy(needed.length);
 
-        if (needed.length === 0 && this.activePieceIdx) {
+        if (needed.length === 0 && this.activePieceIdx.size === 0) {
             this.emit('complete');
             return;
         }
 
-        // REPLENISH EXISTING ACTIVE PIECES 
+        // 1. Replenish existing active pieces in working set
         for (const pieceIdx of Array.from(this.activePieceIdx)) {
             if (this.pieceManager.hasPiece(pieceIdx)) {
                 this.activePieceIdx.delete(pieceIdx);
                 continue;
             }
             const unassignedBlocks = this.getUnassignedBlockForPiece(pieceIdx);
-            if (unassignedBlocks.length > 0) this.queuedRequests.push(...unassignedBlocks);
+            if (unassignedBlocks.length > 0) {
+                this.queuedRequests.push(...unassignedBlocks);
+            }
         }
 
         const activePeers = this.peerPoolManager.getPeerRecords();
 
-        // EXPAND ACTIVE PIECES *if below concurrency cap
-        while (this.activePieceIdx.size < this.MAX_CONCURRENT_PIECES && needed.length > 0) {
-            // filter pieces that aren't already active
+        // 2. Expand working set up to MAX_WORKING_SET_PIECES
+        while (this.activePieceIdx.size < this.MAX_WORKING_SET_PIECES) {
             const candidatePieces = needed.filter(idx => !this.activePieceIdx.has(idx));
             if (candidatePieces.length === 0) break;
 
@@ -85,28 +86,33 @@ export class PieceScheduler extends EventEmitter {
             if (eligibleCandidates.length === 0) break;
 
             const targetPiece = this.selectPiece(eligibleCandidates);
-            this.activePieceIdx.add(targetPiece);
-
             const newBlocks = this.getUnassignedBlockForPiece(targetPiece);
-            this.queuedRequests.push(...newBlocks);
+
+            // Working set invariant: only add piece if actionable unassigned blocks exist
+            if (newBlocks.length > 0) {
+                this.activePieceIdx.add(targetPiece);
+                this.queuedRequests.push(...newBlocks);
+            } else {
+                break;
+            }
         }
+
+        // 3. Dispatch queued requests via single canonical path
         this.dispatchQueuedRequests();
     }
 
     private getUnassignedBlockForPiece(pieceIdx: number): BlockRequest[] {
+        // Invariant failure in PieceManager must bubble up and fail loudly
         const missingOffsets = this.pieceManager.getMissingOffsets(pieceIdx);
         const pieceSize = pieceIdx === this.pieceCount - 1 ? this.lastPieceLength : this.pieceLength;
-
         const unassigned: BlockRequest[] = [];
 
         for (const begin of missingOffsets) {
-            // check if already in queue
             const isQueued = this.queuedRequests.some(
                 req => req.index === pieceIdx && req.begin === begin
             );
             if (isQueued) continue;
 
-            // check if currently in-flight
             const isInflight = Array.from(this.inflightRequestMap.values()).some(
                 requests => requests.some(
                     req => req.index === pieceIdx && req.begin === begin
@@ -118,7 +124,7 @@ export class PieceScheduler extends EventEmitter {
             unassigned.push({ index: pieceIdx, begin, length });
         }
         return unassigned;
-    };
+    }
 
     private filterEligiblePeers(records: PeerRecord[], neededPieces: number[]): EligiblePeerCandidate[] {
         const candidates: EligiblePeerCandidate[] = [];
@@ -137,11 +143,6 @@ export class PieceScheduler extends EventEmitter {
         return candidates;
     }
 
-    private updateSchedulerStrategy(length: number): void {
-        if (length > 1 && this.strategy === 'RANDOM_FIRST') this.strategy = 'RAREST_FIRST';
-    }
-
-
     private selectPiece(candidates: EligiblePeerCandidate[]): number {
         switch (this.strategy) {
             case 'RANDOM_FIRST':
@@ -149,12 +150,12 @@ export class PieceScheduler extends EventEmitter {
             case 'RAREST_FIRST':
                 return this.schedulerRarestFirst(candidates);
             default:
-                return candidates[0].availablePieces[0]; // Fallback
+                return candidates[0].availablePieces[0];
         }
     }
 
     private schedulerRandomFirst(candidates: EligiblePeerCandidate[]): number {
-        const availablePieceSet: Set<number> = new Set();
+        const availablePieceSet = new Set<number>();
         for (const candidate of candidates) {
             for (const pieceIdx of candidate.availablePieces) {
                 availablePieceSet.add(pieceIdx);
@@ -166,7 +167,7 @@ export class PieceScheduler extends EventEmitter {
     }
 
     private schedulerRarestFirst(candidates: EligiblePeerCandidate[]): number {
-        const rarityMap: Map<number, number> = new Map();
+        const rarityMap = new Map<number, number>();
         for (const candidate of candidates) {
             for (const pieceIdx of candidate.availablePieces) {
                 rarityMap.set(pieceIdx, (rarityMap.get(pieceIdx) ?? 0) + 1);
@@ -179,25 +180,13 @@ export class PieceScheduler extends EventEmitter {
             if (count < lowestCount) {
                 lowestCount = count;
                 tiedPieces = [pieceIdx];
-            }
-            else if (count === lowestCount) {
+            } else if (count === lowestCount) {
                 tiedPieces.push(pieceIdx);
             }
         }
         const randomIndex = Math.floor(Math.random() * tiedPieces.length);
         return tiedPieces[randomIndex];
     }
-
-    private generateBlockRequest(pieceIdx: number): BlockRequest[] {
-        const missingOffsets = this.pieceManager.getMissingOffsets(pieceIdx);
-        const pieceSize = pieceIdx === this.pieceCount - 1 ? this.lastPieceLength : this.pieceLength;
-
-        return missingOffsets.map(begin => ({
-            index: pieceIdx,
-            begin,
-            length: Math.min(BLOCK_SIZE, pieceSize - begin)
-        }));
-    };
 
     private dispatchQueuedRequests(): void {
         if (this.queuedRequests.length === 0) return;
@@ -215,31 +204,144 @@ export class PieceScheduler extends EventEmitter {
                 return record.hasPiece(req.index);
             });
 
-            if (candidateRecord) {
-                const inflight = this.inflightRequestMap.get(candidateRecord.key) ?? [];
-                try {
-                    this.peerPoolManager.requestBlocks(
-                        candidateRecord.key,
-                        req.index,
-                        req.begin,
-                        req.length
-                    );
-
-                    inflight.push(req);
-                    this.inflightRequestMap.set(candidateRecord.key, inflight);
-                }
-                catch (err) {
-                    remainingQueue.push(req);
-                }
-            } else {
+            if (!candidateRecord) {
                 remainingQueue.push(req);
+                continue;
+            }
+
+            try {
+                this.peerPoolManager.requestBlocks(
+                    candidateRecord.key,
+                    req.index,
+                    req.begin,
+                    req.length
+                );
+
+                const inflight = this.inflightRequestMap.get(candidateRecord.key) ?? [];
+                inflight.push(req);
+                this.inflightRequestMap.set(candidateRecord.key, inflight);
+            } catch (err: any) {
+                const code = err?.code;
+                // Requeue strictly on explicit transient conditions
+                if (code === 'PEER_NOT_READY' || code === 'PEER_UNAVAILABLE') {
+                    remainingQueue.push(req);
+                } else {
+                    // Fail loudly on unexpected exceptions or domain violations
+                    throw err;
+                }
             }
         }
         this.queuedRequests = remainingQueue;
     }
 
     private attachListeners(): void {
+        // --- PIECE MANAGER EVENTS ---
 
+        this.pieceManager.on('piece_verified', ({ index, buffer }) => {
+            this.activePieceIdx.delete(index);
+            this.queuedRequests = this.queuedRequests.filter(req => req.index !== index);
+
+            // Strategy transitions to RAREST_FIRST on verified milestone
+            if (!this.hasCompletedInitialPiece) {
+                this.hasCompletedInitialPiece = true;
+                this.strategy = 'RAREST_FIRST';
+            }
+
+            this.evaluateAllInterests();
+            this.emit('piece_completed', { index, buffer });
+            this.schedule();
+        });
+
+        this.pieceManager.on('piece_verification_failed', ({ index }) => {
+            this.activePieceIdx.delete(index);
+            this.schedule();
+        });
+
+        // --- PEER POOL MANAGER EVENTS ---
+
+        this.peerPoolManager.on('peer_ready', ({ key }) => {
+            this.evaluateInterest(key);
+            this.schedule();
+        });
+
+        this.peerPoolManager.on('block', ({ peerKey, index, begin, block }) => {
+            const inflight = this.inflightRequestMap.get(peerKey) || [];
+            this.inflightRequestMap.set(
+                peerKey,
+                inflight.filter(req => !(req.index === index && req.begin === begin))
+            );
+
+            try {
+                this.pieceManager.acceptBlock(index, begin, block);
+            } catch (err) {
+                this.emit('error', err);
+            }
+            this.schedule();
+        });
+
+        this.peerPoolManager.on('peer_choked', ({ key }) => {
+            this.requeueInflightRequests(key);
+            this.schedule();
+        });
+
+        this.peerPoolManager.on('peer_unchoked', () => {
+            this.schedule();
+        });
+
+        this.peerPoolManager.on('peer_have', ({ key }) => {
+            this.evaluateInterest(key);
+            this.schedule();
+        });
+
+        this.peerPoolManager.on('peer_bitfield', ({ key }) => {
+            this.evaluateInterest(key);
+            this.schedule();
+        });
+
+        const handlePeerDrop = ({ key }: { key: string }) => {
+            this.requeueInflightRequests(key);
+            this.inflightRequestMap.delete(key);
+            this.schedule();
+        };
+
+        this.peerPoolManager.on('peer_disconnected', handlePeerDrop);
+        this.peerPoolManager.on('peer_failed', handlePeerDrop);
     }
 
+    // --- PRIVATE HELPERS ---
+
+    private evaluateInterest(key: string): void {
+        const records = this.peerPoolManager.getPeerRecords();
+        const peer = records.find(p => p.key === key);
+        if (!peer) return;
+
+        const needed = this.pieceManager.findNeeded();
+        const hasNeededPiece = needed.some(idx => peer.hasPiece(idx));
+
+        if (hasNeededPiece && !peer.amInterested) {
+            this.peerPoolManager.expressInterest(key);
+        } else if (!hasNeededPiece && peer.amInterested) {
+            this.peerPoolManager.revokeInterest(key);
+        }
+    }
+
+    private evaluateAllInterests(): void {
+        const records = this.peerPoolManager.getPeerRecords();
+        for (const record of records) {
+            this.evaluateInterest(record.key);
+        }
+    }
+
+    private requeueInflightRequests(key: string): void {
+        const inflight = this.inflightRequestMap.get(key) || [];
+        for (const req of inflight) {
+            const isAlreadyQueued = this.queuedRequests.some(
+                q => q.index === req.index && q.begin === req.begin
+            );
+            if (!isAlreadyQueued && this.pieceManager.isNeeded(req.index)) {
+                this.queuedRequests.push(req);
+            }
+        }
+        this.inflightRequestMap.set(key, []);
+    }
 }

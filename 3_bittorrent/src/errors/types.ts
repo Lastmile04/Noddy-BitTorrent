@@ -37,7 +37,8 @@ export type PeerStateErrorCode =
     | 'INVALID_PIECE_INDEX'
     | 'INVALID_HAVE'
     | 'INVALID_BITFIELD'
-    | 'PEER_UNAVAILABLE' 
+    | 'PEER_UNAVAILABLE'
+    | 'SOCKET_NOT_WRITABLE'
     | 'PEER_NOT_READY';
 
 export type PieceErrorCode =
@@ -74,4 +75,4 @@ export interface BaseErrorOpts {
     cause?: unknown;
     context?: Record<string, unknown>;
 }
- 
+

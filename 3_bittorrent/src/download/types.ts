@@ -66,14 +66,9 @@ export interface PeerPoolConfig {
     totalLength: number
     pieceCount: number
     maxPeers?: number
+    isPieceNeeded: (index: number) => boolean;
 }
 
-export interface BlockEventReceived {
-    peerKey: string
-    index: number
-    begin: number
-    block: Buffer
-}
 
 export interface PeerBlockPayload {
     index: number
@@ -85,6 +80,11 @@ export interface PoolListeners {
     block: (data: PeerBlockPayload) => void,
     error: (err?: Error) => void,
     closed: () => void
+    ready: () => void
+    choke: () => void
+    unchoke: () => void
+    have: (index: number) => void
+    bitfield: (bitfield: Buffer) => void
 }
 
 // PIECE_SCHEDULER
