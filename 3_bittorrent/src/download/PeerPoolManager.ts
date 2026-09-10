@@ -49,7 +49,6 @@ export class PeerPoolManager extends EventEmitter {
         const records: PeerRecord[] = [];
 
         for (const [key, peer] of this.peers.entries()) {
-            if (peer.lifecycleState !== 'READY') continue;
 
             records.push({
                 key,

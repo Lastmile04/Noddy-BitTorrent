@@ -16,7 +16,7 @@ export class PieceManager extends EventEmitter {
     totalVerifiedBytes: number;
     clientBitfield: Buffer;
 
-    private missingPieces: Set<number>;
+    private missingPieces: Set<number>;                 // set of pieces that we currently don't possess
     private activePieces: Map<number, ActivePiece>;
 
     constructor({
@@ -100,6 +100,7 @@ export class PieceManager extends EventEmitter {
         if (active.downloadedBytes === pieceSize) {
             this.verifyPiece(pieceIdx, active.buffer);
         }
+        this.activePieces.set(pieceIdx, active);
     }
 
     public findNeeded(): number[] {

@@ -32,7 +32,7 @@ export interface DownloadSession {
 export interface ActivePiece {
     buffer: Buffer
     downloadedBytes: number
-    receivedBlocks: Set<number>
+    receivedBlocks: Set<number> // set of begin offsets
 }
 
 export interface PieceManagerConfig {

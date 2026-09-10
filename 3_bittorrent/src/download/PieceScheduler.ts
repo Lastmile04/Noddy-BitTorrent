@@ -1,7 +1,8 @@
 import EventEmitter from "node:events";
-import { BlockRequest, DownloadMode, EligiblePeerCandidate, PeerRecord, PieceSchedulerConfig, PieceStrategy } from "./types.js";
+import { BlockRequest, DownloadMode, PeerRecord, PieceSchedulerConfig, PieceStrategy } from "./types.js";
 import { PieceManager } from "./PieceManager.js";
 import { PeerPoolManager } from "./PeerPoolManager.js";
+import { ErrorFactory } from "../errors/TorrentError.js";
 
 const BLOCK_SIZE = 16384;
 
@@ -14,6 +15,14 @@ export class PieceScheduler extends EventEmitter {
     queuedRequests: BlockRequest[];
 
     private inflightRequestMap: Map<string, BlockRequest[]>;
+    private peersByPiece: Map<number, Set<string>>;
+
+    /**
+     * piecesByAvailability represents availability strictly among the peers 
+     * currently known and connected to this client, not absolute swarm-wide rarity.
+     */
+    private piecesByAvailability: Map<number, Set<number>>;
+
     private isRunning: boolean;
     private mode: DownloadMode;
     private strategy: PieceStrategy;
@@ -22,6 +31,10 @@ export class PieceScheduler extends EventEmitter {
 
     private readonly MAX_INFLIGHT_PER_PEER = 5;
     private readonly MAX_WORKING_SET_PIECES = 8;
+
+    // Reentrancy guards
+    private isScheduling: boolean = false;
+    private scheduleRequested: boolean = false;
 
     constructor({
         pieceLength,
@@ -43,19 +56,50 @@ export class PieceScheduler extends EventEmitter {
         this.strategy = 'RANDOM_FIRST';
         this.activePieceIdx = new Set();
         this.hasCompletedInitialPiece = false;
+        this.peersByPiece = new Map();
+        this.piecesByAvailability = new Map();
     }
 
     public start(): void {
         if (this.isRunning) return;
         this.isRunning = true;
         this.attachListeners();
+        // JavaScript's synchronous execution guarantees this snapshotting process 
+        // won't be interleaved with incoming peer network events.
+        this.initializeAvailabilityTracking();
         this.schedule();
     }
 
+    /**
+     * Event-driven schedule entry point. 
+     * Protected against synchronous reentrancy (e.g., if dispatching a block triggers 
+     * an immediate synchronous event that calls schedule() again).
+     */
     private schedule(): void {
         if (!this.isRunning) return;
 
-        // Invariant: Scheduling pass evaluates against one immutable state snapshot
+        if (this.isScheduling) {
+            this.scheduleRequested = true;
+            return;
+        }
+
+        this.isScheduling = true;
+        this.scheduleRequested = false;
+
+        try {
+            this.performSchedulingPass();
+        } finally {
+            this.isScheduling = false;
+            if (this.scheduleRequested) {
+                // Defer subsequent scheduling to prevent call-stack overflow 
+                // while ensuring no state changes are ignored.
+                queueMicrotask(() => this.schedule());
+            }
+        }
+    }
+
+    private performSchedulingPass(): void {
+        // Snapshot 1: Needed pieces
         const needed = this.pieceManager.findNeeded();
 
         if (needed.length === 0 && this.activePieceIdx.size === 0) {
@@ -63,7 +107,7 @@ export class PieceScheduler extends EventEmitter {
             return;
         }
 
-        // 1. Replenish existing active pieces in working set
+        // Replenish existing active pieces in working set
         for (const pieceIdx of Array.from(this.activePieceIdx)) {
             if (this.pieceManager.hasPiece(pieceIdx)) {
                 this.activePieceIdx.delete(pieceIdx);
@@ -75,34 +119,198 @@ export class PieceScheduler extends EventEmitter {
             }
         }
 
-        const activePeers = this.peerPoolManager.getPeerRecords();
+        // Snapshot 2: Peer records for working-set eligibility
+        const availablePeers = this.peerPoolManager.getPeerRecords();
 
-        // 2. Expand working set up to MAX_WORKING_SET_PIECES
+        // Expand working set up to MAX_WORKING_SET_PIECES
         while (this.activePieceIdx.size < this.MAX_WORKING_SET_PIECES) {
             const candidatePieces = needed.filter(idx => !this.activePieceIdx.has(idx));
             if (candidatePieces.length === 0) break;
 
-            const eligibleCandidates = this.filterEligiblePeers(activePeers, candidatePieces);
-            if (eligibleCandidates.length === 0) break;
+            // Strategy dictates priority ordering based on index snapshots
+            const prioritizedCandidates = this.getPrioritizedCandidates(candidatePieces);
+            let selectedPiece: number | null = null;
 
-            const targetPiece = this.selectPiece(eligibleCandidates);
-            const newBlocks = this.getUnassignedBlockForPiece(targetPiece);
+            // Schedulability check: ensure at least one currently eligible peer possesses the piece
+            for (const pieceIdx of prioritizedCandidates) {
+                const hasEligiblePeer = availablePeers.some(peer =>
+                    peer.lifecycleState === 'READY' &&
+                    !peer.isChoked &&
+                    (this.inflightRequestMap.get(peer.key)?.length ?? 0) < this.MAX_INFLIGHT_PER_PEER &&
+                    peer.hasPiece(pieceIdx)
+                );
 
-            // Working set invariant: only add piece if actionable unassigned blocks exist
+                if (hasEligiblePeer) {
+                    selectedPiece = pieceIdx;
+                    break;
+                }
+            }
+
+            // If the rarest needed pieces have no eligible peers, halt working-set expansion
+            if (selectedPiece === null) break;
+
+            const newBlocks = this.getUnassignedBlockForPiece(selectedPiece);
+
             if (newBlocks.length > 0) {
-                this.activePieceIdx.add(targetPiece);
+                this.activePieceIdx.add(selectedPiece);
                 this.queuedRequests.push(...newBlocks);
             } else {
                 break;
             }
         }
 
-        // 3. Dispatch queued requests via single canonical path
+        // Dispatch queued requests
         this.dispatchQueuedRequests();
     }
 
+    // --- AVAILABILITY INDEX MANAGEMENT ---
+
+    private initializeAvailabilityTracking(): void {
+        this.peersByPiece.clear();
+        this.piecesByAvailability.clear();
+
+        for (let pieceIdx = 0; pieceIdx < this.pieceCount; pieceIdx++) {
+            this.peersByPiece.set(pieceIdx, new Set());
+        }
+
+        const records = this.peerPoolManager.getPeerRecords();
+        for (const record of records) {
+            for (let pieceIdx = 0; pieceIdx < this.pieceCount; pieceIdx++) {
+                if (record.hasPiece(pieceIdx)) {
+                    this.peersByPiece.get(pieceIdx)!.add(record.key);
+                }
+            }
+        }
+
+        for (let pieceIdx = 0; pieceIdx < this.pieceCount; pieceIdx++) {
+            const count = this.peersByPiece.get(pieceIdx)!.size;
+            this.addPieceToAvailabilityBucket(pieceIdx, count);
+        }
+    }
+
+    private addPieceToAvailabilityBucket(pieceIdx: number, count: number): void {
+        let bucket = this.piecesByAvailability.get(count);
+        if (!bucket) {
+            bucket = new Set<number>();
+            this.piecesByAvailability.set(count, bucket);
+        }
+        bucket.add(pieceIdx);
+    }
+
+    private removePieceFromAvailabilityBucket(pieceIdx: number, count: number): void {
+        const bucket = this.piecesByAvailability.get(count);
+        if (bucket) {
+            bucket.delete(pieceIdx);
+            if (bucket.size === 0) {
+                this.piecesByAvailability.delete(count);
+            }
+        }
+    }
+
+    private registerPeerPiece(peerKey: string, pieceIdx: number): void {
+        const peerSet = this.peersByPiece.get(pieceIdx);
+        if (!peerSet || peerSet.has(peerKey)) return;
+
+        const oldCount = peerSet.size;
+        peerSet.add(peerKey);
+        const newCount = peerSet.size;
+
+        this.removePieceFromAvailabilityBucket(pieceIdx, oldCount);
+        this.addPieceToAvailabilityBucket(pieceIdx, newCount);
+    }
+
+    private unregisterPeerPiece(peerKey: string, pieceIdx: number): void {
+        const peerSet = this.peersByPiece.get(pieceIdx);
+        if (!peerSet || !peerSet.has(peerKey)) return;
+
+        const oldCount = peerSet.size;
+        peerSet.delete(peerKey);
+        const newCount = peerSet.size;
+
+        this.removePieceFromAvailabilityBucket(pieceIdx, oldCount);
+        this.addPieceToAvailabilityBucket(pieceIdx, newCount);
+    }
+
+    private syncPeerBitfield(peerKey: string): void {
+        const peer = this.peerPoolManager.getPeerRecords().find(p => p.key === peerKey);
+        if (!peer) return;
+
+        for (let pieceIdx = 0; pieceIdx < this.pieceCount; pieceIdx++) {
+            const peerSet = this.peersByPiece.get(pieceIdx);
+            if (!peerSet) continue;
+
+            const hasPieceNow = peer.hasPiece(pieceIdx);
+            const hadPieceBefore = peerSet.has(peerKey);
+
+            if (hasPieceNow && !hadPieceBefore) {
+                this.registerPeerPiece(peerKey, pieceIdx);
+            } else if (!hasPieceNow && hadPieceBefore) {
+                this.unregisterPeerPiece(peerKey, pieceIdx);
+            }
+        }
+    }
+
+    private handlePeerDropAvailability(peerKey: string): void {
+        for (let pieceIdx = 0; pieceIdx < this.pieceCount; pieceIdx++) {
+            this.unregisterPeerPiece(peerKey, pieceIdx);
+        }
+    }
+
+    // --- STRATEGY CANDIDATE SELECTION ---
+
+    private getPrioritizedCandidates(candidatePieces: number[]): number[] {
+        switch (this.strategy) {
+            case 'RANDOM_FIRST':
+                return this.schedulerRandomFirstCandidates(candidatePieces);
+            case 'RAREST_FIRST':
+                return this.schedulerRarestFirstCandidates(candidatePieces);
+            default:
+                throw ErrorFactory.normalize(
+                    new Error("The Scheduler is in an unsupported internal state")
+                );
+        }
+    }
+
+    private schedulerRandomFirstCandidates(pieces: number[]): number[] {
+        const shuffled = [...pieces];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        return shuffled;
+    }
+
+    private schedulerRarestFirstCandidates(pieces: number[]): number[] {
+        const candidateSet = new Set(pieces);
+        const prioritized: number[] = [];
+
+        const sortedRarityKeys = Array.from(this.piecesByAvailability.keys()).sort((a, b) => a - b);
+
+        for (const rarityLevel of sortedRarityKeys) {
+            const pieceSet = this.piecesByAvailability.get(rarityLevel);
+            if (!pieceSet || pieceSet.size === 0) continue;
+
+            const tierMatches: number[] = [];
+            for (const idx of pieceSet) {
+                if (candidateSet.has(idx)) {
+                    tierMatches.push(idx);
+                }
+            }
+
+            for (let i = tierMatches.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [tierMatches[i], tierMatches[j]] = [tierMatches[j], tierMatches[i]];
+            }
+
+            prioritized.push(...tierMatches);
+        }
+
+        return prioritized;
+    }
+
+    // --- BLOCK DISPATCH & QUEUING ---
+
     private getUnassignedBlockForPiece(pieceIdx: number): BlockRequest[] {
-        // Invariant failure in PieceManager must bubble up and fail loudly
         const missingOffsets = this.pieceManager.getMissingOffsets(pieceIdx);
         const pieceSize = pieceIdx === this.pieceCount - 1 ? this.lastPieceLength : this.pieceLength;
         const unassigned: BlockRequest[] = [];
@@ -126,71 +334,12 @@ export class PieceScheduler extends EventEmitter {
         return unassigned;
     }
 
-    private filterEligiblePeers(records: PeerRecord[], neededPieces: number[]): EligiblePeerCandidate[] {
-        const candidates: EligiblePeerCandidate[] = [];
-
-        for (const record of records) {
-            if (record.lifecycleState !== 'READY' || record.isChoked) continue;
-
-            const inflightCount = this.inflightRequestMap.get(record.key)?.length ?? 0;
-            if (inflightCount >= this.MAX_INFLIGHT_PER_PEER) continue;
-
-            const availablePieces = neededPieces.filter(pieceIdx => record.hasPiece(pieceIdx));
-            if (availablePieces.length > 0) {
-                candidates.push({ peer: record, availablePieces });
-            }
-        }
-        return candidates;
-    }
-
-    private selectPiece(candidates: EligiblePeerCandidate[]): number {
-        switch (this.strategy) {
-            case 'RANDOM_FIRST':
-                return this.schedulerRandomFirst(candidates);
-            case 'RAREST_FIRST':
-                return this.schedulerRarestFirst(candidates);
-            default:
-                return candidates[0].availablePieces[0];
-        }
-    }
-
-    private schedulerRandomFirst(candidates: EligiblePeerCandidate[]): number {
-        const availablePieceSet = new Set<number>();
-        for (const candidate of candidates) {
-            for (const pieceIdx of candidate.availablePieces) {
-                availablePieceSet.add(pieceIdx);
-            }
-        }
-        const allAvailablePieces = Array.from(availablePieceSet);
-        const randomIdx = Math.floor(Math.random() * allAvailablePieces.length);
-        return allAvailablePieces[randomIdx];
-    }
-
-    private schedulerRarestFirst(candidates: EligiblePeerCandidate[]): number {
-        const rarityMap = new Map<number, number>();
-        for (const candidate of candidates) {
-            for (const pieceIdx of candidate.availablePieces) {
-                rarityMap.set(pieceIdx, (rarityMap.get(pieceIdx) ?? 0) + 1);
-            }
-        }
-
-        let tiedPieces: number[] = [];
-        let lowestCount = Infinity;
-        for (const [pieceIdx, count] of rarityMap.entries()) {
-            if (count < lowestCount) {
-                lowestCount = count;
-                tiedPieces = [pieceIdx];
-            } else if (count === lowestCount) {
-                tiedPieces.push(pieceIdx);
-            }
-        }
-        const randomIndex = Math.floor(Math.random() * tiedPieces.length);
-        return tiedPieces[randomIndex];
-    }
-
     private dispatchQueuedRequests(): void {
         if (this.queuedRequests.length === 0) return;
 
+        // Dispatch fetches a fresh snapshot of peers to ensure requests 
+        // are routed according to current capacity and connection state, 
+        // distinct from the working-set expansion eligibility check.
         const activePeers = this.peerPoolManager.getPeerRecords();
         const remainingQueue: BlockRequest[] = [];
 
@@ -222,11 +371,9 @@ export class PieceScheduler extends EventEmitter {
                 this.inflightRequestMap.set(candidateRecord.key, inflight);
             } catch (err: any) {
                 const code = err?.code;
-                // Requeue strictly on explicit transient conditions
                 if (code === 'PEER_NOT_READY' || code === 'PEER_UNAVAILABLE') {
                     remainingQueue.push(req);
                 } else {
-                    // Fail loudly on unexpected exceptions or domain violations
                     throw err;
                 }
             }
@@ -234,14 +381,13 @@ export class PieceScheduler extends EventEmitter {
         this.queuedRequests = remainingQueue;
     }
 
-    private attachListeners(): void {
-        // --- PIECE MANAGER EVENTS ---
+    // --- EVENT LISTENERS ---
 
+    private attachListeners(): void {
         this.pieceManager.on('piece_verified', ({ index, buffer }) => {
             this.activePieceIdx.delete(index);
             this.queuedRequests = this.queuedRequests.filter(req => req.index !== index);
 
-            // Strategy transitions to RAREST_FIRST on verified milestone
             if (!this.hasCompletedInitialPiece) {
                 this.hasCompletedInitialPiece = true;
                 this.strategy = 'RAREST_FIRST';
@@ -257,14 +403,17 @@ export class PieceScheduler extends EventEmitter {
             this.schedule();
         });
 
-        // --- PEER POOL MANAGER EVENTS ---
-
         this.peerPoolManager.on('peer_ready', ({ key }) => {
+            this.syncPeerBitfield(key);
             this.evaluateInterest(key);
             this.schedule();
         });
 
         this.peerPoolManager.on('block', ({ peerKey, index, begin, block }) => {
+            // Data Integrity Model: The request is removed from inflight BEFORE acceptBlock.
+            // If acceptBlock throws (e.g., bad bounds), the block is safely dropped here.
+            // Because it is no longer inflight or queued, the next schedule() pass 
+            // will detect the offset as missing and organically re-request it.
             const inflight = this.inflightRequestMap.get(peerKey) || [];
             this.inflightRequestMap.set(
                 peerKey,
@@ -288,18 +437,21 @@ export class PieceScheduler extends EventEmitter {
             this.schedule();
         });
 
-        this.peerPoolManager.on('peer_have', ({ key }) => {
+        this.peerPoolManager.on('peer_have', ({ key, index }: { key: string; index: number }) => {
+            this.registerPeerPiece(key, index);
             this.evaluateInterest(key);
             this.schedule();
         });
 
-        this.peerPoolManager.on('peer_bitfield', ({ key }) => {
+        this.peerPoolManager.on('peer_bitfield', ({ key }: { key: string }) => {
+            this.syncPeerBitfield(key);
             this.evaluateInterest(key);
             this.schedule();
         });
 
         const handlePeerDrop = ({ key }: { key: string }) => {
             this.requeueInflightRequests(key);
+            this.handlePeerDropAvailability(key);
             this.inflightRequestMap.delete(key);
             this.schedule();
         };
@@ -308,7 +460,7 @@ export class PieceScheduler extends EventEmitter {
         this.peerPoolManager.on('peer_failed', handlePeerDrop);
     }
 
-    // --- PRIVATE HELPERS ---
+    // --- INTEREST & INFLIGHT MANAGEMENT ---
 
     private evaluateInterest(key: string): void {
         const records = this.peerPoolManager.getPeerRecords();
