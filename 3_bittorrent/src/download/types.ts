@@ -111,3 +111,7 @@ export interface EligiblePeerCandidate {
     availablePieces: number[];
 }
 
+export interface SchedulablePiece {
+    piece: number | null,
+    eligiblePeers: PeerRecord[]
+}
