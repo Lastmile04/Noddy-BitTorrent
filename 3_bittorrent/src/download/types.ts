@@ -47,17 +47,17 @@ export interface PieceManagerConfig {
 
 // PEER_POOL_MANAGER
 
-export interface PeerRecord {
-    readonly key: string;
-    readonly peerId?: Buffer;
-    readonly lifecycleState: LifecycleStateOpts;
-    readonly isChoked: boolean;          // Remote peer is choking us
-    readonly amInterested: boolean;      // We have expressed interest in remote peer
-    readonly peerInterested: boolean;    // Remote peer has expressed interest in us
-    readonly inflightRequests: number;
-    readonly downloadRate: number;
-    hasPiece(pieceIndex: number): boolean;
-}
+// export interface PeerRecord {
+//     readonly key: string;
+//     readonly peerId?: Buffer;
+//     readonly lifecycleState: LifecycleStateOpts;
+//     readonly isChoked: boolean;          // Remote peer is choking us
+//     readonly amInterested: boolean;      // We have expressed interest in remote peer
+//     readonly peerInterested: boolean;    // Remote peer has expressed interest in us
+//     readonly inflightRequests: number;
+//     readonly downloadRate: number;
+//     hasPiece(pieceIndex: number): boolean;
+// }
 
 export interface PeerPoolConfig {
     infoHash: Buffer
@@ -111,7 +111,7 @@ export interface EligiblePeerCandidate {
     availablePieces: number[];
 }
 
-export interface SchedulablePiece {
-    piece: number | null,
-    eligiblePeers: PeerRecord[]
+export interface WorkingPieceState {
+    addedAt: number,
+    lastProgressAt: number,
 }

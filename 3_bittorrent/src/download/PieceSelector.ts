@@ -1,0 +1,23 @@
+import EventEmitter from "node:events";
+
+type PieceToPeersMap = Map<number, Set<string>>;
+
+export class PieceSelector extends EventEmitter {
+
+    pieceCount: number;
+    availabilityArray: number[];
+    pieceToPeersMap: PieceToPeersMap;
+
+    constructor(pieceCount: number) {
+        super();
+        this.pieceCount = pieceCount;
+        this.availabilityArray = new Array(pieceCount);
+        this.pieceToPeersMap = new Map();
+    }
+
+    public select(needed: number[], peers: PeerRecord[], setSize: number): number[] { }
+
+    public getSources(pieces: number[]): PieceToPeersMap { };
+
+    public updatePieceToPeersMap(): void { };
+}

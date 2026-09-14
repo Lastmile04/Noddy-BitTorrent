@@ -45,25 +45,25 @@ export class PeerPoolManager extends EventEmitter {
     // --- QUERIES ---
 
     /** Returns all currently READY (usable) peers eligible for block scheduling. */
-    public getPeerRecords(): PeerRecord[] {
-        const records: PeerRecord[] = [];
-
-        for (const [key, peer] of this.peers.entries()) {
-
-            records.push({
-                key,
-                peerId: peer.remotePeerState.remotePeerId,
-                lifecycleState: peer.lifecycleState,
-                isChoked: peer.remotePeerState.peerChoking,
-                amInterested: peer.remotePeerState.amInterested,
-                peerInterested: peer.remotePeerState.peerInterested,
-                inflightRequests: peer.inflightRequestCount(),
-                downloadRate: peer.remotePeerState.downloadRate,
-                hasPiece: (index: number) => this.checkPeerBitfield(peer, index),
-            });
-        }
-        return records;
-    }
+    // public getPeerRecords(): PeerRecord[] {
+    //     const records: PeerRecord[] = [];
+    //
+    //     for (const [key, peer] of this.peers.entries()) {
+    //
+    //         records.push({
+    //             key,
+    //             peerId: peer.remotePeerState.remotePeerId,
+    //             lifecycleState: peer.lifecycleState,
+    //             isChoked: peer.remotePeerState.peerChoking,
+    //             amInterested: peer.remotePeerState.amInterested,
+    //             peerInterested: peer.remotePeerState.peerInterested,
+    //             inflightRequests: peer.inflightRequestCount(),
+    //             downloadRate: peer.remotePeerState.downloadRate,
+    //             hasPiece: (index: number) => this.checkPeerBitfield(peer, index),
+    //         });
+    //     }
+    //     return records;
+    // }
 
     // --- COMMANDS ---
 
@@ -151,6 +151,30 @@ export class PeerPoolManager extends EventEmitter {
         this.removeAllListeners();
     }
 
+    public filterEligiblePeers(peerKeys: Set<string>, maxRequestCount: number): Set<string> {
+        const validKeys: Set<string> = new Set();
+        for (const key of peerKeys.values()) {
+            const peer = this.peers.get(key);
+            if (peer?.lifecycleState === 'READY' &&
+                peer.remotePeerState.peerChoking === false &&
+                peer.inflightRequestCount() < maxRequestCount
+            ) validKeys.add(key);
+        }
+        return validKeys;
+    }
+
+    public checkPeerBitfield(peer: BitTorrentPeer, index: number): boolean {
+        const bitfield = peer.remotePeerState.bitfield;
+        if (!bitfield) return false;
+
+        const byteIdx = Math.floor(index / 8);
+        const byte = bitfield[byteIdx];
+        if (byte === undefined) return false;
+
+        const bitOffset = 7 - (index % 8);
+        return (byte & (1 << bitOffset)) !== 0;
+    }
+
     // --- PRIVATE HELPERS ---
 
     private getOrThrow(key: string): BitTorrentPeer {
@@ -163,18 +187,6 @@ export class PeerPoolManager extends EventEmitter {
             );
         }
         return peer;
-    }
-
-    private checkPeerBitfield(peer: BitTorrentPeer, index: number): boolean {
-        const bitfield = peer.remotePeerState.bitfield;
-        if (!bitfield) return false;
-
-        const byteIdx = Math.floor(index / 8);
-        const byte = bitfield[byteIdx];
-        if (byte === undefined) return false;
-
-        const bitOffset = 7 - (index % 8);
-        return (byte & (1 << bitOffset)) !== 0;
     }
 
     private attachPeerListeners(key: string, peer: BitTorrentPeer): void {
