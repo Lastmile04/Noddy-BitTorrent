@@ -1,7 +1,7 @@
 import EventEmitter from "node:events";
 import * as net from 'net';
 import { BitTorrentPeer } from "../transport/BitTorrentPeer.js";
-import { PeerBlockPayload, PeerPoolConfig, PeerRecord, PoolListeners } from "./types.js";
+import { PeerBlockPayload, PeerPoolConfig, PoolListeners } from "./types.js";
 import { ErrorFactory } from "../errors/TorrentError.js";
 
 export class PeerPoolManager extends EventEmitter {
@@ -173,6 +173,12 @@ export class PeerPoolManager extends EventEmitter {
 
         const bitOffset = 7 - (index % 8);
         return (byte & (1 << bitOffset)) !== 0;
+    }
+
+    public getInflightRequestsCount(peerKey: string): number {
+        const peer = this.peers.get(peerKey);
+        if (peer === undefined) return -1;
+        return peer?.inflightRequestCount();
     }
 
     // --- PRIVATE HELPERS ---

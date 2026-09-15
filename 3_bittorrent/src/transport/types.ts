@@ -47,7 +47,7 @@ export interface PeerMessage {
     block?: Buffer;
 }
 
-export interface RequestState {
+export interface BlockRequestState {
     index: number;
     begin: number;
     length: number;

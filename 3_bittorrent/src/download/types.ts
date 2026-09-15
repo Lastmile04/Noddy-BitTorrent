@@ -1,6 +1,5 @@
 import { Peer } from '../peers/types.js';
 import { TorrentMeta } from '../app/types.js';
-import { LifecycleStateOpts } from '../transport/types.js';
 import { PieceManager } from './PieceManager.js';
 import { PeerPoolManager } from './PeerPoolManager.js';
 
@@ -106,12 +105,13 @@ export interface BlockRequest {
 export type DownloadMode = 'ACTIVE' | 'ENDGAME' | 'COMPLETE';
 export type PieceStrategy = 'RANDOM_FIRST' | 'RAREST_FIRST';
 
-export interface EligiblePeerCandidate {
-    peer: PeerRecord;
-    availablePieces: number[];
-}
-
 export interface WorkingPieceState {
     addedAt: number,
     lastProgressAt: number,
 }
+
+export interface InflightBlockRequest extends BlockRequest {
+    peerKey?: string; // Tracks the "ip:port" string identifier
+    sentAt?: number;  // Crucial for monitoring timeouts
+}
+

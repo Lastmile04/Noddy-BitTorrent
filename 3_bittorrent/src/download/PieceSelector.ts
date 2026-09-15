@@ -15,7 +15,7 @@ export class PieceSelector extends EventEmitter {
         this.pieceToPeersMap = new Map();
     }
 
-    public select(needed: number[], peers: PeerRecord[], setSize: number): number[] { }
+    public select(needed: number[], setSize: number): number[] { }
 
     public getSources(pieces: number[]): PieceToPeersMap { };
 

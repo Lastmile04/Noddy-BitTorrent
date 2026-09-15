@@ -1,6 +1,6 @@
 import EventEmitter from "node:events";
 import * as net from 'net';
-import { HandshakeResult, PeerConfig, PeerState, BT_PROTOCOL_LEN, BT_PROTOCOL_BUFFER, PeerMessage, RequestState } from "./types.js";
+import { HandshakeResult, PeerConfig, PeerState, BT_PROTOCOL_LEN, BT_PROTOCOL_BUFFER, PeerMessage, BlockRequestState } from "./types.js";
 import { ErrorFactory } from "../errors/TorrentError.js";
 import { LifecycleStateOpts } from "./types.js";
 
@@ -24,7 +24,7 @@ export class BitTorrentPeer extends EventEmitter {
     connectReject?: (reason: Error) => void;
     pieceCount: number;
     MAX_FRAME_SIZE: number;
-    private outstandingRequests: Map<string, RequestState>;
+    private outstandingRequests: Map<string, BlockRequestState>;
 
     constructor({
         socket,
@@ -412,44 +412,44 @@ export class BitTorrentPeer extends EventEmitter {
 
             case 4:
                 if (payload.length !== 4) throw ErrorFactory.network('PROTOCOL_VIOLATION', "Have length mismatched");
-            return { type: "HAVE", pieceIndex: payload.readUInt32BE(0) };
+                return { type: "HAVE", pieceIndex: payload.readUInt32BE(0) };
 
             case 5:
                 return { type: "BITFIELD", bitfield: payload };
 
             case 6:
                 if (payload.length !== 12) throw ErrorFactory.network('PROTOCOL_VIOLATION', "Request length mismatch");
-            return {
-                type: "REQUEST",
-                index: payload.readUInt32BE(0),
-                begin: payload.readUInt32BE(4),
-                length: payload.readUInt32BE(8)
-            };
+                return {
+                    type: "REQUEST",
+                    index: payload.readUInt32BE(0),
+                    begin: payload.readUInt32BE(4),
+                    length: payload.readUInt32BE(8)
+                };
 
             case 7:
                 if (payload.length < 8) throw ErrorFactory.network('PROTOCOL_VIOLATION', "Piece length mismatch");
-            return {
-                type: "PIECE",
-                index: payload.readUInt32BE(0),
-                begin: payload.readUInt32BE(4),
-                block: payload.subarray(8)
-            };
+                return {
+                    type: "PIECE",
+                    index: payload.readUInt32BE(0),
+                    begin: payload.readUInt32BE(4),
+                    block: payload.subarray(8)
+                };
 
             case 8:
                 if (payload.length !== 12) throw ErrorFactory.network('PROTOCOL_VIOLATION', "Cancel length mismatch");
-            return {
-                type: "CANCEL",
-                index: payload.readUInt32BE(0),
-                begin: payload.readUInt32BE(4),
-                length: payload.readUInt32BE(8)
-            };
+                return {
+                    type: "CANCEL",
+                    index: payload.readUInt32BE(0),
+                    begin: payload.readUInt32BE(4),
+                    length: payload.readUInt32BE(8)
+                };
 
             default:
                 throw ErrorFactory.network(
                     'PROTOCOL_VIOLATION',
                     'Unknown message id received from peer',
                     { block: msg, id }
-            );
+                );
         }
     }
 
@@ -460,88 +460,88 @@ export class BitTorrentPeer extends EventEmitter {
         switch (msgObj.type) {
             case "KEEP_ALIVE":
                 this.lastPeerActive = Date.now();
-            break;
+                break;
 
             case "CHOKE":
                 this.remotePeerState.peerChoking = true;
-            this.lastPeerActive = Date.now();
-            this.dropOutstandingRequests();
-            this.emit("choke");
-            break;
+                this.lastPeerActive = Date.now();
+                this.dropOutstandingRequests();
+                this.emit("choke");
+                break;
 
             case "UNCHOKE":
                 this.remotePeerState.peerChoking = false;
-            this.lastPeerActive = Date.now();
-            this.emit("unchoke");
-            break;
+                this.lastPeerActive = Date.now();
+                this.emit("unchoke");
+                break;
 
             case "INTERESTED":
                 this.remotePeerState.peerInterested = true;
-            this.lastPeerActive = Date.now();
-            this.emit("interested");
-            break;
+                this.lastPeerActive = Date.now();
+                this.emit("interested");
+                break;
 
             case "UNINTERESTED":
                 this.remotePeerState.peerInterested = false;
-            this.lastPeerActive = Date.now();
-            this.emit("uninterested");
-            break;
+                this.lastPeerActive = Date.now();
+                this.emit("uninterested");
+                break;
 
             case "HAVE":
                 if (msgObj.pieceIndex === undefined) {
-                return this.fail(
-                    ErrorFactory.network(
-                        'PROTOCOL_VIOLATION',
-                        "HAVE message missing pieceIndex"
-                    )
-                );
-            }
+                    return this.fail(
+                        ErrorFactory.network(
+                            'PROTOCOL_VIOLATION',
+                            "HAVE message missing pieceIndex"
+                        )
+                    );
+                }
 
-            if (msgObj.pieceIndex > this.pieceCount - 1 || msgObj.pieceIndex < 0) {
-                return this.fail(
-                    ErrorFactory.network(
-                        'PROTOCOL_VIOLATION',
-                        "HAVE message has invalid pieceIndex"
-                    )
-                );
-            }
+                if (msgObj.pieceIndex > this.pieceCount - 1 || msgObj.pieceIndex < 0) {
+                    return this.fail(
+                        ErrorFactory.network(
+                            'PROTOCOL_VIOLATION',
+                            "HAVE message has invalid pieceIndex"
+                        )
+                    );
+                }
 
-            this.emit("have", msgObj.pieceIndex);
-            this.updateRemoteBitfield(msgObj.pieceIndex);
-            this.lastPeerActive = Date.now();
-            break;
+                this.emit("have", msgObj.pieceIndex);
+                this.updateRemoteBitfield(msgObj.pieceIndex);
+                this.lastPeerActive = Date.now();
+                break;
 
             case "BITFIELD":
                 if (this.hasReceivedFirstMsg) {
-                return this.fail(
-                    ErrorFactory.network(
-                        'PROTOCOL_VIOLATION',
-                        'Bitfield message must be the first message received after handshake'
-                    )
-                );
-            }
-            if (msgObj.bitfield === undefined) {
-                return this.fail(
-                    ErrorFactory.network(
-                        'PROTOCOL_VIOLATION',
-                        "Bitfield message missing payload"
-                    )
-                );
-            }
+                    return this.fail(
+                        ErrorFactory.network(
+                            'PROTOCOL_VIOLATION',
+                            'Bitfield message must be the first message received after handshake'
+                        )
+                    );
+                }
+                if (msgObj.bitfield === undefined) {
+                    return this.fail(
+                        ErrorFactory.network(
+                            'PROTOCOL_VIOLATION',
+                            "Bitfield message missing payload"
+                        )
+                    );
+                }
 
-            if (!this.validateBitfield(msgObj.bitfield)) {
-                return this.fail(
-                    ErrorFactory.network(
-                        'PROTOCOL_VIOLATION',
-                        "Invalid bitfield payload length or spare bits set",
-                        { bitfield: msgObj.bitfield }
-                    )
-                );
-            }
-            this.remotePeerState.bitfield = msgObj.bitfield;
-            this.lastPeerActive = Date.now();
-            this.emit("bitfield", msgObj.bitfield);
-            break;
+                if (!this.validateBitfield(msgObj.bitfield)) {
+                    return this.fail(
+                        ErrorFactory.network(
+                            'PROTOCOL_VIOLATION',
+                            "Invalid bitfield payload length or spare bits set",
+                            { bitfield: msgObj.bitfield }
+                        )
+                    );
+                }
+                this.remotePeerState.bitfield = msgObj.bitfield;
+                this.lastPeerActive = Date.now();
+                this.emit("bitfield", msgObj.bitfield);
+                break;
 
             case "PIECE": {
                 if (msgObj.index === undefined || msgObj.begin === undefined || !msgObj.block) {
@@ -557,30 +557,30 @@ export class BitTorrentPeer extends EventEmitter {
                     ? (this.totalLength % this.pieceLength) || this.pieceLength
                     : this.pieceLength;
 
-                    const blockLength = msgObj.block.length;
+                const blockLength = msgObj.block.length;
 
-                    if (blockLength === 0 || blockLength > 16384) {
-                        return this.fail(ErrorFactory.network('PROTOCOL_VIOLATION', 'PIECE block size violates maximum 16 KiB limit'));
-                    }
+                if (blockLength === 0 || blockLength > 16384) {
+                    return this.fail(ErrorFactory.network('PROTOCOL_VIOLATION', 'PIECE block size violates maximum 16 KiB limit'));
+                }
 
-                    if (
-                        msgObj.begin < 0 ||
-                        msgObj.begin >= expectedPieceSize ||
+                if (
+                    msgObj.begin < 0 ||
+                    msgObj.begin >= expectedPieceSize ||
                     (msgObj.begin + blockLength) > expectedPieceSize
-                    ) {
-                        return this.fail(ErrorFactory.network('PROTOCOL_VIOLATION', 'PIECE offset or length exceeds piece boundary'));
-                    }
+                ) {
+                    return this.fail(ErrorFactory.network('PROTOCOL_VIOLATION', 'PIECE offset or length exceeds piece boundary'));
+                }
 
-                    const key = this.getRequestKey(msgObj.index, msgObj.begin);
-                    this.outstandingRequests.delete(key);
+                const key = this.getRequestKey(msgObj.index, msgObj.begin);
+                this.outstandingRequests.delete(key);
 
-                    this.emit("block", {
-                        index: msgObj.index,
-                        begin: msgObj.begin,
-                        block: msgObj.block,
-                    });
-                    this.lastPeerActive = Date.now();
-                    break;
+                this.emit("block", {
+                    index: msgObj.index,
+                    begin: msgObj.begin,
+                    block: msgObj.block,
+                });
+                this.lastPeerActive = Date.now();
+                break;
             }
 
             case "REQUEST": {
@@ -612,25 +612,25 @@ export class BitTorrentPeer extends EventEmitter {
                     ? (this.totalLength % this.pieceLength) || this.pieceLength
                     : this.pieceLength;
 
-                    if (
-                        msgObj.begin < 0 ||
-                        msgObj.begin >= expectedPieceSize ||
+                if (
+                    msgObj.begin < 0 ||
+                    msgObj.begin >= expectedPieceSize ||
                     (msgObj.begin + msgObj.length) > expectedPieceSize
-                    ) {
-                        return this.fail(ErrorFactory.network(
-                            'PROTOCOL_VIOLATION',
-                            "REQUEST offset or length exceeds piece boundaries",
-                            { begin: msgObj.begin, length: msgObj.length, expectedPieceSize }
-                        ));
-                    }
+                ) {
+                    return this.fail(ErrorFactory.network(
+                        'PROTOCOL_VIOLATION',
+                        "REQUEST offset or length exceeds piece boundaries",
+                        { begin: msgObj.begin, length: msgObj.length, expectedPieceSize }
+                    ));
+                }
 
-                    this.emit("request", {
-                        index: msgObj.index,
-                        begin: msgObj.begin,
-                        length: msgObj.length,
-                    });
-                    this.lastPeerActive = Date.now();
-                    break;
+                this.emit("request", {
+                    index: msgObj.index,
+                    begin: msgObj.begin,
+                    length: msgObj.length,
+                });
+                this.lastPeerActive = Date.now();
+                break;
             }
 
             case "CANCEL": {
@@ -655,25 +655,25 @@ export class BitTorrentPeer extends EventEmitter {
                     ? (this.totalLength % this.pieceLength) || this.pieceLength
                     : this.pieceLength;
 
-                    if (
-                        msgObj.begin < 0 ||
-                        msgObj.begin >= expectedPieceSize ||
+                if (
+                    msgObj.begin < 0 ||
+                    msgObj.begin >= expectedPieceSize ||
                     (msgObj.begin + msgObj.length) > expectedPieceSize
-                    ) {
-                        return this.fail(ErrorFactory.network(
-                            'PROTOCOL_VIOLATION',
-                            "CANCEL offset or length exceeds piece boundaries",
-                            { begin: msgObj.begin, length: msgObj.length, expectedPieceSize }
-                        ));
-                    }
+                ) {
+                    return this.fail(ErrorFactory.network(
+                        'PROTOCOL_VIOLATION',
+                        "CANCEL offset or length exceeds piece boundaries",
+                        { begin: msgObj.begin, length: msgObj.length, expectedPieceSize }
+                    ));
+                }
 
-                    this.emit("cancel", {
-                        index: msgObj.index,
-                        begin: msgObj.begin,
-                        length: msgObj.length,
-                    });
-                    this.lastPeerActive = Date.now();
-                    break;
+                this.emit("cancel", {
+                    index: msgObj.index,
+                    begin: msgObj.begin,
+                    length: msgObj.length,
+                });
+                this.lastPeerActive = Date.now();
+                break;
             }
         }
 
@@ -847,34 +847,34 @@ export class BitTorrentPeer extends EventEmitter {
             ? (this.totalLength % this.pieceLength) || this.pieceLength
             : this.pieceLength;
 
-            if (begin < 0 || begin >= expectedPieceSize || (begin + length) > expectedPieceSize) {
-                throw ErrorFactory.peer_state(
-                    'INVALID_REQUEST',
-                    "Requested block exceeds piece length boundaries",
-                    { begin, length, expectedPieceSize }
-                );
-            }
+        if (begin < 0 || begin >= expectedPieceSize || (begin + length) > expectedPieceSize) {
+            throw ErrorFactory.peer_state(
+                'INVALID_REQUEST',
+                "Requested block exceeds piece length boundaries",
+                { begin, length, expectedPieceSize }
+            );
+        }
 
-            const key = this.getRequestKey(index, begin);
-            if (this.outstandingRequests.has(key)) {
-                throw ErrorFactory.peer_state(
-                    'INVALID_REQUEST',
-                    "Requested block is already inflight",
-                    { index, begin, length }
-                );
-            }
+        const key = this.getRequestKey(index, begin);
+        if (this.outstandingRequests.has(key)) {
+            throw ErrorFactory.peer_state(
+                'INVALID_REQUEST',
+                "Requested block is already inflight",
+                { index, begin, length }
+            );
+        }
 
-            const payload = this.constructPayload(index, begin, length);
-            const requestState = { index, begin, length, requestedAt: Date.now() };
+        const payload = this.constructPayload(index, begin, length);
+        const requestState = { index, begin, length, requestedAt: Date.now() };
 
-            this.outstandingRequests.set(key, requestState);
+        this.outstandingRequests.set(key, requestState);
 
-            try {
-                this.sendPacket(6, payload);
-            } catch (err: any) {
-                this.outstandingRequests.delete(key);
-                throw err;
-            }
+        try {
+            this.sendPacket(6, payload);
+        } catch (err: any) {
+            this.outstandingRequests.delete(key);
+            throw err;
+        }
     }
 
     public piece(index: number, begin: number, block: Buffer): void {
@@ -899,27 +899,27 @@ export class BitTorrentPeer extends EventEmitter {
             ? (this.totalLength % this.pieceLength) || this.pieceLength
             : this.pieceLength;
 
-            if (
-                begin < 0 ||
-                begin >= expectedPieceSize ||
+        if (
+            begin < 0 ||
+            begin >= expectedPieceSize ||
             (begin + blockLength) > expectedPieceSize
-            ) {
-                throw ErrorFactory.peer_state(
-                    'INVALID_PIECE',
-                    "Given block exceeds piece length boundaries",
-                    { begin, length: blockLength, pieceLength: this.pieceLength }
-                );
-            }
+        ) {
+            throw ErrorFactory.peer_state(
+                'INVALID_PIECE',
+                "Given block exceeds piece length boundaries",
+                { begin, length: blockLength, pieceLength: this.pieceLength }
+            );
+        }
 
-            const payload = Buffer.alloc(8 + blockLength);
-            payload.writeUInt32BE(index, 0);
-            payload.writeUInt32BE(begin, 4);
-            payload.set(block, 8);
-            try {
-                this.sendPacket(7, payload);
-            } catch (err) {
-                throw err;
-            }
+        const payload = Buffer.alloc(8 + blockLength);
+        payload.writeUInt32BE(index, 0);
+        payload.writeUInt32BE(begin, 4);
+        payload.set(block, 8);
+        try {
+            this.sendPacket(7, payload);
+        } catch (err) {
+            throw err;
+        }
     }
 
     public destroy(err?: Error): void {
@@ -964,28 +964,28 @@ export class BitTorrentPeer extends EventEmitter {
             ? (this.totalLength % this.pieceLength) || this.pieceLength
             : this.pieceLength;
 
-            if (begin < 0 || begin >= expectedPieceSize || (begin + length) > expectedPieceSize) {
-                throw ErrorFactory.peer_state(
-                    'INVALID_CANCEL',
-                    "Given block exceeds piece length boundaries",
-                    { begin, length, expectedPieceSize }
-                );
+        if (begin < 0 || begin >= expectedPieceSize || (begin + length) > expectedPieceSize) {
+            throw ErrorFactory.peer_state(
+                'INVALID_CANCEL',
+                "Given block exceeds piece length boundaries",
+                { begin, length, expectedPieceSize }
+            );
+        }
+
+        const key = this.getRequestKey(index, begin);
+        const existingRequest = this.outstandingRequests.get(key);
+
+        this.outstandingRequests.delete(key);
+
+        const payload = this.constructPayload(index, begin, length);
+        try {
+            this.sendPacket(8, payload);
+        } catch (err) {
+            if (existingRequest) {
+                this.outstandingRequests.set(key, existingRequest);
             }
-
-            const key = this.getRequestKey(index, begin);
-            const existingRequest = this.outstandingRequests.get(key);
-
-            this.outstandingRequests.delete(key);
-
-            const payload = this.constructPayload(index, begin, length);
-            try {
-                this.sendPacket(8, payload);
-            } catch (err) {
-                if (existingRequest) {
-                    this.outstandingRequests.set(key, existingRequest);
-                }
-                throw err;
-            }
+            throw err;
+        }
     }
 
     private constructPayload(index: number, begin: number, length: number): Buffer {

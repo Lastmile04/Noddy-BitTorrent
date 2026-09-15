@@ -2,8 +2,7 @@ import { EventEmitter } from "node:stream";
 import { PieceManager } from "./PieceManager.js";
 import { PeerPoolManager } from "./PeerPoolManager.js";
 import { PieceSelector } from "./PieceSelector.js";
-import { PieceSchedulerConfig, BlockRequest, PeerRecord, WorkingPieceState } from "./types.js";
-
+import { PieceSchedulerConfig, BlockRequest, WorkingPieceState, InflightBlockRequest } from "./types.js";
 
 export class PieceScheduler extends EventEmitter {
     pieceLength: number;
@@ -15,7 +14,7 @@ export class PieceScheduler extends EventEmitter {
     pieceSelector: PieceSelector;
 
     requestQueue: BlockRequest[];
-
+    inflightMap: Map<string, InflightBlockRequest>;
 
     MAX_REQUEST_PER_PEER: number;
     BLOCK_SIZE: number;
@@ -40,6 +39,7 @@ export class PieceScheduler extends EventEmitter {
         this.pieceSelector = new PieceSelector(pieceCount);
 
         this.requestQueue = [];
+        this.inflightMap = new Map();
 
         this.workingPieceMap = new Map();
 
@@ -54,11 +54,10 @@ export class PieceScheduler extends EventEmitter {
             this.emit('complete');
             return;
         }
-        const peers = this.peerPoolManager.getPeerRecords();
 
         const selectionCount = this.CURRENT_WORKING_LIMIT - this.workingPieceMap.size;
         if (selectionCount > 0) {
-            const selectedPieces = this.pieceSelector.select(needed, peers, selectionCount);
+            const selectedPieces = this.pieceSelector.select(needed, selectionCount);
             this.addWorkingPiece(selectedPieces);
         }
 
@@ -84,8 +83,7 @@ export class PieceScheduler extends EventEmitter {
         const pieces = Array.from(this.workingPieceMap.keys());
         const pieceToPeers = this.pieceSelector.getSources(pieces);
 
-        for (const pieceIdx of pieceToPeers.keys()) {
-            const peerKeySet = pieceToPeers.get(pieceIdx);
+        for (const [pieceIdx, peerKeySet] of pieceToPeers.entries()) {
             const validKeys = this.peerPoolManager.filterEligiblePeers(peerKeySet, this.MAX_REQUEST_PER_PEER);
             pieceToPeers.set(pieceIdx, validKeys);
         }
@@ -93,11 +91,74 @@ export class PieceScheduler extends EventEmitter {
         return pieceToPeers;
     };
 
-    private queueRequests(peersMap: Map<number, Set<number>>): void {
+    private queueRequests(peersMap: Map<number, Set<string>>): void {
+        for (const pieceIdx of peersMap.keys()) {
+            const missingOffsets = this.pieceManager.getMissingOffsets(pieceIdx);
+            for (const begin of missingOffsets) {
+                const currentPieceSize = pieceIdx === this.pieceCount - 1 ? this.lastPieceLength : this.pieceLength;
+                const length = Math.min(this.BLOCK_SIZE, currentPieceSize - begin);
 
+                const inflightKey = `${pieceIdx}-${begin}`;
+                if (this.inflightMap.has(inflightKey)) continue;
+                const isAlreadyQueued = this.requestQueue.some(req => req.index === pieceIdx && req.begin === begin);
+                if (isAlreadyQueued) continue;
+
+                this.requestQueue.push({
+                    index: pieceIdx,
+                    begin,
+                    length
+                });
+            }
+        }
     }
 
-    private dispatchQueuedRequests(peersMap: Map<number, Set<number>>): void {
+    private dispatchQueuedRequests(peersMap: Map<number, Set<string>>): void {
+        const deferredRequests: BlockRequest[] = [];
 
-    };
+        while (this.requestQueue.length > 0) {
+            const request: InflightBlockRequest = this.requestQueue.shift()!;
+            const inflightKey = `${request.index}-${request.begin}`;
+
+            // If it managed to slip into flight through another thread/event cycle, skip
+            if (this.inflightMap.has(inflightKey)) {
+                continue;
+            }
+
+            // Extract the list of "ip:port" keys representing peers that host this specific piece
+            const validPeerKeys = peersMap.get(request.index);
+            let assignedPeerKey: string | null = null;
+
+            if (validPeerKeys) {
+                for (const peerKey of validPeerKeys) {
+                    // Check active queues using the exact "ip:port" identifier string
+                    const activePipelineSize = this.peerPoolManager.getInflightRequestCount(peerKey);
+
+                    if (activePipelineSize < this.MAX_REQUEST_PER_PEER) {
+                        assignedPeerKey = peerKey;
+                        break;
+                    }
+                }
+            }
+
+            if (assignedPeerKey) {
+                // Attach network parameters to block instance
+                request.peerKey = assignedPeerKey;
+                request.sentAt = Date.now();
+
+                // Track block globally inside the engine map before pushing onto network buffer
+                this.inflightMap.set(inflightKey, request);
+
+                // Dispatch the real TCP or uTP wire command out to the specific target peer
+                this.peerPoolManager.requestBlocks(assignedPeerKey, request.index, request.begin, request.length);
+            } else {
+                // No peer pipeline room available; save request for the next scheduling sweep
+                deferredRequests.push(request);
+            }
+        }
+
+        // Return untouched block elements back to the engine queue
+        this.requestQueue = deferredRequests;
+    }
+
+
 }
