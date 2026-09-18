@@ -115,3 +115,10 @@ export interface InflightBlockRequest extends BlockRequest {
     sentAt?: number;  // Crucial for monitoring timeouts
 }
 
+export interface ReceivedBlock {
+    peerKey: string,
+    index: number,
+    begin: number,
+    block: Buffer,
+}
+

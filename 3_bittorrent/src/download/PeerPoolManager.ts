@@ -175,7 +175,7 @@ export class PeerPoolManager extends EventEmitter {
         return (byte & (1 << bitOffset)) !== 0;
     }
 
-    public getInflightRequestsCount(peerKey: string): number {
+    public getInflightRequestCount(peerKey: string): number {
         const peer = this.peers.get(peerKey);
         if (peer === undefined) return -1;
         return peer?.inflightRequestCount();

@@ -19,5 +19,7 @@ export class PieceSelector extends EventEmitter {
 
     public getSources(pieces: number[]): PieceToPeersMap { };
 
-    public updatePieceToPeersMap(): void { };
+    public updatePieceToPeersMap(key: string, data: number | Buffer): void { };
+
+    public removePeer(key: string): void { };
 }
