@@ -169,9 +169,9 @@ export class PieceScheduler extends EventEmitter {
     }
 
     private attachListeners(): void {
+
         // peerPoolManager events 
         this.peerPoolManager.on('block', (data) => this.handleBlockReceived(data));
-
         this.peerPoolManager.on('peer_ready', () => this.schedule());
         this.peerPoolManager.on('peer_unchoked', () => this.schedule());
 
@@ -196,6 +196,16 @@ export class PieceScheduler extends EventEmitter {
 
         this.peerPoolManager.on('peer_disconnected', handlePeerRemoval);
         this.peerPoolManager.on('peer_failed', handlePeerRemoval);
+
+        // PieceManager
+        this.pieceManager.on('piece_verified', (data) => this.handlePieceVerification(data));
+
+        this.pieceManager.on('download_complete', () => {
+            this.emit('download_complete');
+        });
+
+        this.pieceManager.on('piece_verification_failed', () => this.schedule());
+        //NOTE: for verification fail later if possible I can add peer reputation to punish bad performing peers
     }
 
     private evictInflightForPeer(peerKey: string): void {
@@ -204,6 +214,17 @@ export class PieceScheduler extends EventEmitter {
                 this.inflightMap.delete(inflightKey);
             }
         }
+    }
+
+    private handlePieceVerification(pieceIdx: number): void {
+        if (this.workingPieceMap.has(pieceIdx)) this.workingPieceMap.delete(pieceIdx);
+
+        for (const inflightBlock of this.inflightMap.values()) {
+            if (inflightBlock.index === pieceIdx) {
+                throw ErrorFactory.normalize("Error in internal inflightMap schdeuler logic");
+            }
+        };
+        this.schedule();
     }
 
     private handleBlockReceived(data: ReceivedBlock): void {

@@ -100,8 +100,9 @@ export class PieceManager extends EventEmitter {
         if (active.downloadedBytes === pieceSize) {
             this.verifyPiece(pieceIdx, active.buffer);
         }
-        this.activePieces.set(pieceIdx, active);
+
     }
+
 
     public findNeeded(): number[] {
         return Array.from(this.missingPieces);
@@ -157,10 +158,11 @@ export class PieceManager extends EventEmitter {
 
             if (this.pieceHashes[idx].equals(bufHash)) {
                 this.markPieceVerifiedLocally(idx);
-                this.emit('piece_verified', { index: idx, buffer: buf });
+                this.emit('piece_verified', idx);
             } else {
-                this.emit('piece_verification_failed', { index: idx });
+                this.emit('piece_verification_failed', idx);
             }
+            this.activePieces.delete(idx);
         }
         finally {
             this.activePieces.delete(idx);
