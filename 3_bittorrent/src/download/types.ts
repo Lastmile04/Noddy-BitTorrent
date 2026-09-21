@@ -92,6 +92,7 @@ export interface PieceSchedulerConfig {
     pieceLength: number
     pieceCount: number
     lastPieceLength: number
+    totalSize: number
     pieceManager: PieceManager
     peerPoolManager: PeerPoolManager
 }
@@ -111,8 +112,7 @@ export interface WorkingPieceState {
 }
 
 export interface InflightBlockRequest extends BlockRequest {
-    peerKey?: string; // Tracks the "ip:port" string identifier
-    sentAt?: number;  // Crucial for monitoring timeouts
+    peers: Map<string, number>
 }
 
 export interface ReceivedBlock {

@@ -21,6 +21,7 @@ export class PieceScheduler extends EventEmitter {
     public readonly pieceLength: number;
     public readonly pieceCount: number;
     public readonly lastPieceLength: number;
+    public readonly totalSize: number;
 
     public readonly pieceManager: PieceManager;
     public readonly peerPoolManager: PeerPoolManager;
@@ -37,18 +38,25 @@ export class PieceScheduler extends EventEmitter {
     private readonly BLOCK_SIZE: number = 16384;
     private readonly CURRENT_WORKING_LIMIT: number = 8;
     private readonly BLOCK_TIMEOUT_MS: number = 15000;
+    private FINISHED_BLOCKS: number = 0;
+    public readonly TOTAL_BLOCKS: number;
+
 
     constructor({
         pieceManager,
         peerPoolManager,
         pieceLength,
         pieceCount,
-        lastPieceLength
+        lastPieceLength,
+        totalSize
     }: PieceSchedulerConfig) {
         super();
         this.pieceCount = pieceCount;
         this.pieceLength = pieceLength;
         this.lastPieceLength = lastPieceLength;
+        this.totalSize = totalSize;
+
+        this.TOTAL_BLOCKS = Math.ceil(this.totalSize / this.BLOCK_SIZE);
 
         this.pieceManager = pieceManager;
         this.peerPoolManager = peerPoolManager;
@@ -69,7 +77,8 @@ export class PieceScheduler extends EventEmitter {
     }
 
     private schedule(): void {
-        // Evict expired requests so they are immediately discoverable in step 5
+
+        // Evict expired requests so they are immediately discoverable later on 
         this.sweepStaleInflightRequests();
 
         // Query globally unverified/missing pieces
@@ -115,7 +124,6 @@ export class PieceScheduler extends EventEmitter {
 
             return shuffled.slice(0, limit);
         }
-
         // NORMAL mode: Delegate to deterministic Rarest-First policy
         return this.pieceSelector.select(candidates, limit);
     }
@@ -157,42 +165,78 @@ export class PieceScheduler extends EventEmitter {
                 if (isAlreadyQueued) continue;
 
                 this.requestQueue.push({ index: pieceIdx, begin, length });
+                if (this.TOTAL_BLOCKS - this.FINISHED_BLOCKS <= this.inflightMap.size + this.requestQueue.length) {
+                    this.mode = SchedulerMode.ENDGAME;
+                }
             }
         }
     }
 
-    private dispatchQueuedRequests(peersMap: Map<number, Set<string>>): void {
+    private dispatchQueuedRequests(pieceToPeersMap: Map<number, Set<string>>): void {
         const deferredRequests: BlockRequest[] = [];
 
         while (this.requestQueue.length > 0) {
             const request = this.requestQueue.shift()!;
             const inflightKey = `${request.index}-${request.begin}`;
+            let inflightEntry = this.inflightMap.get(inflightKey);
 
-            if (this.inflightMap.has(inflightKey)) continue;
+            // In NORMAL mode, if the block is already actively inflight with any peer, skip re-dispatch
+            if (this.mode === SchedulerMode.NORMAL && inflightEntry && inflightEntry.peers.size > 0) {
+                continue;
+            }
 
-            const validPeerKeys = peersMap.get(request.index);
-            let assignedPeerKey: string | null = null;
+            const validPeerKeys = pieceToPeersMap.get(request.index);
 
             if (validPeerKeys) {
                 for (const peerKey of validPeerKeys) {
+                    // Skip if this specific peer already has an active inflight request for this block
+                    if (inflightEntry?.peers.has(peerKey)) {
+                        continue;
+                    }
+
                     const activePipelineSize = this.peerPoolManager.getInflightRequestCount(peerKey);
                     if (activePipelineSize < this.MAX_REQUEST_PER_PEER) {
-                        assignedPeerKey = peerKey;
-                        break;
+
+                        // 1. ATTEMPT WIRE DISPATCH FIRST
+                        try {
+                            this.peerPoolManager.requestBlocks(
+                                peerKey,
+                                request.index,
+                                request.begin,
+                                request.length
+                            );
+                        } catch (err) {
+                            // Wire request failed synchronously (e.g., socket closed, PEER_NOT_READY)
+                            // Do NOT record this peer in inflight state; try next eligible peer
+                            continue;
+                        }
+
+                        // 2. WIRE SUCCESS: Record peer in inflight state
+                        if (!inflightEntry) {
+                            inflightEntry = {
+                                ...request,
+                                peers: new Map<string, number>()
+                            };
+                            this.inflightMap.set(inflightKey, inflightEntry);
+                        }
+
+                        inflightEntry.peers.set(peerKey, Date.now());
+
+                        // In NORMAL mode: enforce 1 block -> 1 peer max (halt peer loop)
+                        // In ENDGAME mode: NO break statement -> fan out to remaining eligible peers
+                        if (this.mode === SchedulerMode.NORMAL) {
+                            break;
+                        }
                     }
                 }
             }
 
-            if (assignedPeerKey) {
-                const inflightReq: InflightBlockRequest = {
-                    ...request,
-                    peerKey: assignedPeerKey,
-                    sentAt: Date.now()
-                };
+            // 3. INVARIANT CHECK: Is this block covered by AT LEAST ONE active peer request?
+            const isCoveredInflight = inflightEntry && inflightEntry.peers.size > 0;
 
-                this.inflightMap.set(inflightKey, inflightReq);
-                this.peerPoolManager.requestBlocks(assignedPeerKey, request.index, request.begin, request.length);
-            } else {
+            // If no peer is currently requesting this block (neither previously nor newly assigned),
+            // defer it back to the requestQueue so it is never dropped.
+            if (!isCoveredInflight) {
                 deferredRequests.push(request);
             }
         }
@@ -303,6 +347,7 @@ export class PieceScheduler extends EventEmitter {
         }
 
         this.inflightMap.delete(inflightKey);
+        this.FINISHED_BLOCKS += 1;
         const pieceState = this.workingPieceMap.get(data.index);
 
         if (pieceState) {
