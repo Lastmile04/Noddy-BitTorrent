@@ -181,7 +181,7 @@ export class PieceScheduler extends EventEmitter {
             let inflightEntry = this.inflightMap.get(inflightKey);
 
             // In NORMAL mode, if the block is already actively inflight with any peer, skip re-dispatch
-            if (this.mode === SchedulerMode.NORMAL && inflightEntry && inflightEntry.peers.size > 0) {
+            if (this.mode === SchedulerMode.NORMAL && inflightEntry) {
                 continue;
             }
 
@@ -190,6 +190,7 @@ export class PieceScheduler extends EventEmitter {
             if (validPeerKeys) {
                 for (const peerKey of validPeerKeys) {
                     // Skip if this specific peer already has an active inflight request for this block
+                    // For Endgame
                     if (inflightEntry?.peers.has(peerKey)) {
                         continue;
                     }
@@ -232,7 +233,7 @@ export class PieceScheduler extends EventEmitter {
             }
 
             // 3. INVARIANT CHECK: Is this block covered by AT LEAST ONE active peer request?
-            const isCoveredInflight = inflightEntry && inflightEntry.peers.size > 0;
+            const isCoveredInflight = inflightEntry;
 
             // If no peer is currently requesting this block (neither previously nor newly assigned),
             // defer it back to the requestQueue so it is never dropped.

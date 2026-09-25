@@ -112,7 +112,7 @@ export interface WorkingPieceState {
 }
 
 export interface InflightBlockRequest extends BlockRequest {
-    peers: Map<string, number>
+    peers: Map<string, number>  // peerKey ("ip:port") -> sentAt (timestamp)
 }
 
 export interface ReceivedBlock {
