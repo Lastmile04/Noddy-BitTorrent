@@ -122,3 +122,21 @@ export interface ReceivedBlock {
     block: Buffer,
 }
 
+export interface PeerHandlers {
+    block(data: ReceivedBlock): void;
+    peerReady(): void;
+    peerUnchoked(): void;
+    peerHave(data: { key: string; index: number }): void;
+    peerBitfield(data: { key: string; bitfield: Buffer }): void;
+    peerChoked(data: { key: string }): void;
+    peerDisconnected(data: { key: string }): void;
+    peerFailed(data: { key: string }): void;
+}
+
+export interface PieceHandler {
+    verified: (pieceIdx: number) => void;
+    failed: (pieceIdx: number) => void;
+    complete: () => void;
+}
+
+

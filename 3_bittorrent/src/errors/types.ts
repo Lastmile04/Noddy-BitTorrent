@@ -50,6 +50,8 @@ export type PieceErrorCode =
 
 export type SystemErrorCode = 'UNHANDLED_EXCEPTION';
 
+export type SchedulerErrorCode = 'SCHEDULER_DESTROYED';
+
 export type AppErrorCode =
     | CodecErrorCode
     | NetworkErrorCode
@@ -57,6 +59,7 @@ export type AppErrorCode =
     | SystemErrorCode
     | SocketErrorCode
     | PeerStateErrorCode
+    | SchedulerErrorCode
     | PieceErrorCode;
 
 export type DomainOpts =
@@ -66,7 +69,8 @@ export type DomainOpts =
     | 'SYSTEM'
     | 'SOCKET'
     | 'PEER_STATE'
-    | 'PIECE_STATE';
+    | 'PIECE_STATE'
+    | 'SCHEDULER_STATE';
 
 export interface BaseErrorOpts {
     domain: DomainOpts;

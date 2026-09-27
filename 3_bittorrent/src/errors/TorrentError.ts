@@ -6,6 +6,7 @@ import {
     NetworkErrorCode,
     PeerStateErrorCode,
     PieceErrorCode,
+    SchedulerErrorCode,
     SocketErrorCode,
     TrackerErrorCode,
 } from "./types.js";
@@ -97,6 +98,16 @@ export const ErrorFactory = {
     piece_state: (code: PieceErrorCode, message: string, context?: Record<string, unknown>, cause?: unknown) => {
         return new TorrentError({
             domain: 'PIECE_STATE',
+            code,
+            message,
+            context,
+            cause,
+        });
+    },
+
+    scheduler_state: (code: SchedulerErrorCode, message: string, context?: Record<string, unknown>, cause?: unknown) => {
+        return new TorrentError({
+            domain: 'SCHEDULER_STATE',
             code,
             message,
             context,

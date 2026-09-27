@@ -7,7 +7,9 @@ import {
     BlockRequest,
     WorkingPieceState,
     InflightBlockRequest,
-    ReceivedBlock
+    ReceivedBlock,
+    PeerHandlers,
+    PieceHandler
 } from "./types.js";
 import { ErrorFactory } from "../errors/TorrentError.js";
 
@@ -30,8 +32,12 @@ export class PieceScheduler extends EventEmitter {
     private requestQueue: BlockRequest[];
     private inflightMap: Map<string, InflightBlockRequest>;
     private workingPieceMap: Map<number, WorkingPieceState>;
+    private queuedSet: Set<string> = new Set();
 
     private mode: SchedulerMode = SchedulerMode.BEGIN;
+
+    private boundPeerHandlers!: PeerHandlers;
+    private boundPieceHandlers!: PieceHandler;
 
     // Operational Tunables
     private readonly MAX_REQUEST_PER_PEER: number = 8;
@@ -41,6 +47,11 @@ export class PieceScheduler extends EventEmitter {
     private FINISHED_BLOCKS: number = 0;
     public readonly TOTAL_BLOCKS: number;
 
+    // Lifecycle State Flags
+    private isRunning: boolean = false;
+    private isDestroyed: boolean = false;
+    private isScheduling = false;
+    private isSchedulePending = false;
 
     constructor({
         pieceManager,
@@ -65,11 +76,38 @@ export class PieceScheduler extends EventEmitter {
         this.requestQueue = [];
         this.inflightMap = new Map();
         this.workingPieceMap = new Map();
+        this.initBoundHandlers();
     }
 
     public start(): void {
+        if (this.isDestroyed) {
+            throw ErrorFactory.scheduler_state(
+                'SCHEDULER_DESTROYED',
+                'Cannot start a destroyed scheduler instance'
+            )
+        };
+        if (this.isRunning) return;
+
+        this.isRunning = true;
         this.attachListeners();
         this.schedule();
+    }
+
+    public stop(): void {
+        if (!this.isRunning) return;
+        this.isRunning = false;
+        this.detachListeners();
+
+        this.requestQueue = [];
+        this.inflightMap.clear();
+        this.workingPieceMap.clear();
+        this.queuedSet.clear();
+    }
+
+    public destroy(): void {
+        this.stop();
+        this.isDestroyed = true;
+        this.removeAllListeners();
     }
 
     public getMode(): SchedulerMode {
@@ -77,30 +115,45 @@ export class PieceScheduler extends EventEmitter {
     }
 
     private schedule(): void {
+        if (!this.isRunning || this.isDestroyed) return;
 
-        // Evict expired requests so they are immediately discoverable later on 
-        this.sweepStaleInflightRequests();
-
-        // Query globally unverified/missing pieces
-        const needed = this.pieceManager.findNeeded();
-        if (needed.length === 0) {
-            this.emit('complete');
+        // If already running, flag that another pass is needed and exit early
+        if (this.isScheduling) {
+            this.isSchedulePending = true;
             return;
         }
 
-        // Replenish working set capacity
-        const selectionCapacity = this.CURRENT_WORKING_LIMIT - this.workingPieceMap.size;
-        if (selectionCapacity > 0) {
-            const selectedPieces = this.selectPiecesForWorkingSet(needed, selectionCapacity);
-            this.addWorkingPiece(selectedPieces);
+        this.isScheduling = true;
+
+        try {
+            // Keep running passes as long as synchronous re-entrant events request it
+            do {
+                this.isSchedulePending = false;
+
+                this.sweepStaleInflightRequests();
+
+                const needed = this.pieceManager.findNeeded();
+                if (needed.length === 0) {
+                    this.emit('complete');
+                    return;
+                }
+
+                const selectionCapacity = this.CURRENT_WORKING_LIMIT - this.workingPieceMap.size;
+                if (selectionCapacity > 0) {
+                    const selectedPieces = this.selectPiecesForWorkingSet(needed, selectionCapacity);
+                    this.addWorkingPiece(selectedPieces);
+                }
+
+                const eligiblePeers = this.getEligiblePeers();
+                this.queueRequests();
+                this.dispatchQueuedRequests(eligiblePeers);
+
+            } while (this.isSchedulePending && this.isRunning && !this.isDestroyed);
+
+        } finally {
+            this.isScheduling = false;
+            this.isSchedulePending = false;
         }
-
-        // Resolve eligible peers for active working set
-        const eligiblePeers = this.getEligiblePeers();
-
-        // Gather missing block offsets & dispatch onto peer pipelines
-        this.queueRequests();
-        this.dispatchQueuedRequests(eligiblePeers);
     }
 
     private selectPiecesForWorkingSet(needed: number[], limit: number): number[] {
@@ -159,12 +212,11 @@ export class PieceScheduler extends EventEmitter {
                 const length = Math.min(this.BLOCK_SIZE, currentPieceSize - begin);
 
                 const inflightKey = `${pieceIdx}-${begin}`;
-                if (this.inflightMap.has(inflightKey)) continue;
-
-                const isAlreadyQueued = this.requestQueue.some(req => req.index === pieceIdx && req.begin === begin);
-                if (isAlreadyQueued) continue;
+                if (this.inflightMap.has(inflightKey) || this.queuedSet.has(inflightKey)) continue;
 
                 this.requestQueue.push({ index: pieceIdx, begin, length });
+                this.queuedSet.add(inflightKey);
+
                 if (this.TOTAL_BLOCKS - this.FINISHED_BLOCKS <= this.inflightMap.size + this.requestQueue.length) {
                     this.mode = SchedulerMode.ENDGAME;
                 }
@@ -178,6 +230,7 @@ export class PieceScheduler extends EventEmitter {
         while (this.requestQueue.length > 0) {
             const request = this.requestQueue.shift()!;
             const inflightKey = `${request.index}-${request.begin}`;
+            this.queuedSet.delete(inflightKey);
             let inflightEntry = this.inflightMap.get(inflightKey);
 
             // In NORMAL mode, if the block is already actively inflight with any peer, skip re-dispatch
@@ -191,14 +244,12 @@ export class PieceScheduler extends EventEmitter {
                 for (const peerKey of validPeerKeys) {
                     // Skip if this specific peer already has an active inflight request for this block
                     // For Endgame
-                    if (inflightEntry?.peers.has(peerKey)) {
-                        continue;
-                    }
+                    if (inflightEntry?.peers.has(peerKey)) continue;
 
                     const activePipelineSize = this.peerPoolManager.getInflightRequestCount(peerKey);
                     if (activePipelineSize < this.MAX_REQUEST_PER_PEER) {
 
-                        // 1. ATTEMPT WIRE DISPATCH FIRST
+                        // ATTEMPT WIRE DISPATCH FIRST
                         try {
                             this.peerPoolManager.requestBlocks(
                                 peerKey,
@@ -212,7 +263,7 @@ export class PieceScheduler extends EventEmitter {
                             continue;
                         }
 
-                        // 2. WIRE SUCCESS: Record peer in inflight state
+                        // WIRE SUCCESS: Record peer in inflight state
                         if (!inflightEntry) {
                             inflightEntry = {
                                 ...request,
@@ -225,21 +276,17 @@ export class PieceScheduler extends EventEmitter {
 
                         // In NORMAL mode: enforce 1 block -> 1 peer max (halt peer loop)
                         // In ENDGAME mode: NO break statement -> fan out to remaining eligible peers
-                        if (this.mode === SchedulerMode.NORMAL) {
-                            break;
-                        }
+                        if (this.mode === SchedulerMode.NORMAL) break;
                     }
                 }
             }
 
-            // 3. INVARIANT CHECK: Is this block covered by AT LEAST ONE active peer request?
+            // INVARIANT CHECK: Is this block covered by AT LEAST ONE active peer request?
             const isCoveredInflight = inflightEntry;
 
             // If no peer is currently requesting this block (neither previously nor newly assigned),
             // defer it back to the requestQueue so it is never dropped.
-            if (!isCoveredInflight) {
-                deferredRequests.push(request);
-            }
+            if (!isCoveredInflight) deferredRequests.push(request);
         }
 
         this.requestQueue = deferredRequests;
@@ -248,9 +295,13 @@ export class PieceScheduler extends EventEmitter {
     private sweepStaleInflightRequests(): void {
         const now = Date.now();
         for (const [key, req] of this.inflightMap.entries()) {
-            if (req.sentAt && (now - req.sentAt > this.BLOCK_TIMEOUT_MS)) {
-                this.inflightMap.delete(key);
+            for (const [peerKey, timestamp] of req.peers.entries()) {
+                if (timestamp && (now - timestamp > this.BLOCK_TIMEOUT_MS)) {
+                    req.peers.delete(peerKey);
+                }
             }
+
+            if (req.peers.size === 0) this.inflightMap.delete(key);
         }
     }
 
@@ -263,56 +314,97 @@ export class PieceScheduler extends EventEmitter {
     }
 
     private evictInflightForPeer(peerKey: string): void {
-        for (const [inflightKey, block] of this.inflightMap.entries()) {
-            if (block.peerKey === peerKey) {
-                this.inflightMap.delete(inflightKey);
-            }
+        for (const [key, req] of this.inflightMap.entries()) {
+            req.peers.delete(peerKey);
+            if (req.peers.size === 0) this.inflightMap.delete(key);
         }
     }
 
-    private attachListeners(): void {
-        // Peer pool events
-        this.peerPoolManager.on('block', (data) => this.handleBlockReceived(data));
-        this.peerPoolManager.on('peer_ready', () => this.schedule());
-        this.peerPoolManager.on('peer_unchoked', () => this.schedule());
-
-        // Update selector state AND wake up scheduler loop on availability changes
-        this.peerPoolManager.on('peer_have', (data) => {
-            this.pieceSelector.updatePieceToPeersMap(data.key, data.index);
-            this.schedule();
-        });
-
-        this.peerPoolManager.on('peer_bitfield', (data) => {
-            this.pieceSelector.updatePieceToPeersMap(data.key, data.bitfield);
-            this.schedule();
-        });
-
-        this.peerPoolManager.on('peer_choked', ({ key }) => {
-            this.evictInflightForPeer(key);
-            this.schedule();
-        });
-
+    private initBoundHandlers(): void {
         const handlePeerRemoval = ({ key }: { key: string }) => {
+            if (!this.isRunning) return;
             this.pieceSelector.removePeer(key);
             this.evictInflightForPeer(key);
             this.schedule();
         };
 
-        this.peerPoolManager.on('peer_disconnected', handlePeerRemoval);
-        this.peerPoolManager.on('peer_failed', handlePeerRemoval);
+        this.boundPeerHandlers = {
+            block: (data) => this.handleBlockReceived(data),
+            peerReady: () => this.schedule(),
+            peerUnchoked: () => this.schedule(),
 
-        // PieceManager events
-        this.pieceManager.on('piece_verified', (pieceIdx) => this.handlePieceVerification(pieceIdx));
+            peerHave: (data) => {
+                this.pieceSelector.updatePieceToPeersMap(data.key, data.index);
+                this.schedule();
+            },
 
-        this.pieceManager.on('piece_verification_failed', (pieceIdx) => {
-            // Retain piece inside workingPieceMap. Evict stale inflight records.
-            this.evictInflightForPiece(pieceIdx);
-            this.schedule(); // Rediscover all missing block offsets automatically via getMissingOffsets()
-        });
+            peerBitfield: (data) => {
+                this.pieceSelector.updatePieceToPeersMap(data.key, data.bitfield);
+                this.schedule();
+            },
 
-        this.pieceManager.on('download_complete', () => {
-            this.emit('download_complete');
-        });
+            peerChoked: ({ key }) => {
+                this.evictInflightForPeer(key);
+                this.schedule();
+            },
+
+            peerDisconnected: handlePeerRemoval,
+            peerFailed: handlePeerRemoval,
+        };
+
+        this.boundPieceHandlers = {
+            verified: (pieceIdx) => this.handlePieceVerification(pieceIdx),
+            failed: (pieceIdx) => {
+                // Calculate blocks contained in this piece and deduct from FINISHED_BLOCKS
+                const currentPieceSize = pieceIdx === this.pieceCount - 1 ? this.lastPieceLength : this.pieceLength;
+                const blocksInPiece = Math.ceil(currentPieceSize / this.BLOCK_SIZE);
+
+                // Subtract only blocks that were previously accounted for
+                const missingOffsets = this.pieceManager.getMissingOffsets(pieceIdx);
+                const receivedBlocksInPiece = blocksInPiece - missingOffsets.length;
+                this.FINISHED_BLOCKS = Math.max(0, this.FINISHED_BLOCKS - receivedBlocksInPiece);
+
+                this.evictInflightForPiece(pieceIdx);
+                this.schedule();
+            },
+            complete: () => {
+                this.emit('download_complete');
+            }
+        };
+    }
+
+    private attachListeners(): void {
+        const ppm = this.peerPoolManager;
+        ppm.on('block', this.boundPeerHandlers.block);
+        ppm.on('peer_ready', this.boundPeerHandlers.peerReady);
+        ppm.on('peer_unchoked', this.boundPeerHandlers.peerUnchoked);
+        ppm.on('peer_have', this.boundPeerHandlers.peerHave);
+        ppm.on('peer_bitfield', this.boundPeerHandlers.peerBitfield);
+        ppm.on('peer_choked', this.boundPeerHandlers.peerChoked);
+        ppm.on('peer_disconnected', this.boundPeerHandlers.peerDisconnected);
+        ppm.on('peer_failed', this.boundPeerHandlers.peerFailed);
+
+        const pm = this.pieceManager;
+        pm.on('piece_verified', this.boundPieceHandlers.verified);
+        pm.on('piece_verification_failed', this.boundPieceHandlers.failed);
+        pm.on('download_complete', this.boundPieceHandlers.complete);
+    }
+
+    private detachListeners(): void {
+        const ppm = this.peerPoolManager;
+        ppm.off('block', this.boundPeerHandlers.block);
+        ppm.off('peer_ready', this.boundPeerHandlers.peerReady);
+        ppm.off('peer_unchoked', this.boundPeerHandlers.peerUnchoked);
+        ppm.off('peer_have', this.boundPeerHandlers.peerHave);
+        ppm.off('peer_bitfield', this.boundPeerHandlers.peerBitfield);
+        ppm.off('peer_choked', this.boundPeerHandlers.peerChoked);
+        ppm.off('peer_disconnected', this.boundPeerHandlers.peerDisconnected);
+        ppm.off('peer_failed', this.boundPeerHandlers.peerFailed);
+
+        const pm = this.pieceManager;
+        pm.off('piece_verified', this.boundPieceHandlers.verified);
+        pm.off('piece_verification_failed', this.boundPieceHandlers.failed);
+        pm.off('download_complete', this.boundPieceHandlers.complete);
     }
 
     private handlePieceVerification(pieceIdx: number): void {
@@ -325,14 +417,13 @@ export class PieceScheduler extends EventEmitter {
         const inflightKey = `${data.index}-${data.begin}`;
         const inflightBlock = this.inflightMap.get(inflightKey);
 
-        if (!inflightBlock) return;
-        if (inflightBlock.peerKey !== data.peerKey) return;
+        if (!inflightBlock || !inflightBlock.peers.has(data.peerKey)) return;
 
         if (inflightBlock.length !== data.block.length) {
-            this.inflightMap.delete(inflightKey);
+            this.evictInflightForPeer(data.peerKey);
             this.emit('error', ErrorFactory.network(
                 'PROTOCOL_VIOLATION',
-                `Block of invalid length sent by peer: ${inflightBlock.peerKey}`
+                `Block of invalid length sent by peer: ${data.peerKey}`
             ));
             this.schedule();
             return;
@@ -341,16 +432,27 @@ export class PieceScheduler extends EventEmitter {
         try {
             this.pieceManager.acceptBlock(data.index, data.begin, data.block);
         } catch (err) {
-            this.inflightMap.delete(inflightKey);
+            this.evictInflightForPeer(data.peerKey);
             this.emit('error', err);
             this.schedule();
             return;
         }
 
+        for (const peerKey of inflightBlock.peers.keys()) {
+            if (peerKey !== data.peerKey) {
+                this.peerPoolManager.cancelRequest(
+                    peerKey,
+                    data.index,
+                    data.begin,
+                    data.block.length
+                );
+            }
+        }
+
         this.inflightMap.delete(inflightKey);
         this.FINISHED_BLOCKS += 1;
-        const pieceState = this.workingPieceMap.get(data.index);
 
+        const pieceState = this.workingPieceMap.get(data.index);
         if (pieceState) {
             pieceState.lastProgressAt = Date.now();
         }
