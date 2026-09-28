@@ -90,7 +90,6 @@ export class PieceManager extends EventEmitter {
 
         const active = this.activePieces.get(pieceIdx)!;
 
-        // Prevent duplicate blocks (overlap is impossible due to alignment invariant)
         if (active.receivedBlocks.has(begin)) return;
 
         block.copy(active.buffer, begin);

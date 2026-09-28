@@ -46,18 +46,6 @@ export interface PieceManagerConfig {
 
 // PEER_POOL_MANAGER
 
-// export interface PeerRecord {
-//     readonly key: string;
-//     readonly peerId?: Buffer;
-//     readonly lifecycleState: LifecycleStateOpts;
-//     readonly isChoked: boolean;          // Remote peer is choking us
-//     readonly amInterested: boolean;      // We have expressed interest in remote peer
-//     readonly peerInterested: boolean;    // Remote peer has expressed interest in us
-//     readonly inflightRequests: number;
-//     readonly downloadRate: number;
-//     hasPiece(pieceIndex: number): boolean;
-// }
-
 export interface PeerPoolConfig {
     infoHash: Buffer
     peerId: Buffer
@@ -109,6 +97,7 @@ export type PieceStrategy = 'RANDOM_FIRST' | 'RAREST_FIRST';
 export interface WorkingPieceState {
     addedAt: number,
     lastProgressAt: number,
+    receivedBlocksCount: number
 }
 
 export interface InflightBlockRequest extends BlockRequest {

@@ -3,6 +3,7 @@ import * as net from 'net';
 import { BitTorrentPeer } from "../transport/BitTorrentPeer.js";
 import { PeerBlockPayload, PeerPoolConfig, PoolListeners } from "./types.js";
 import { ErrorFactory } from "../errors/TorrentError.js";
+import { brotliCompress } from "node:zlib";
 
 export class PeerPoolManager extends EventEmitter {
     private peers: Map<string, BitTorrentPeer>;
@@ -41,29 +42,6 @@ export class PeerPoolManager extends EventEmitter {
             // Pool handles cleanup via its 'error' listener. Catching here prevents unhandled rejections.
         });
     }
-
-    // --- QUERIES ---
-
-    /** Returns all currently READY (usable) peers eligible for block scheduling. */
-    // public getPeerRecords(): PeerRecord[] {
-    //     const records: PeerRecord[] = [];
-    //
-    //     for (const [key, peer] of this.peers.entries()) {
-    //
-    //         records.push({
-    //             key,
-    //             peerId: peer.remotePeerState.remotePeerId,
-    //             lifecycleState: peer.lifecycleState,
-    //             isChoked: peer.remotePeerState.peerChoking,
-    //             amInterested: peer.remotePeerState.amInterested,
-    //             peerInterested: peer.remotePeerState.peerInterested,
-    //             inflightRequests: peer.inflightRequestCount(),
-    //             downloadRate: peer.remotePeerState.downloadRate,
-    //             hasPiece: (index: number) => this.checkPeerBitfield(peer, index),
-    //         });
-    //     }
-    //     return records;
-    // }
 
     // --- COMMANDS ---
 
@@ -179,6 +157,11 @@ export class PeerPoolManager extends EventEmitter {
         const peer = this.peers.get(peerKey);
         if (peer === undefined) return -1;
         return peer?.inflightRequestCount();
+    }
+
+    public removeOutstandingRequestsFromPeer(peerKey: string, blockKey: string): void {
+        const peer = this.peers.get(peerKey);
+        peer?.evictOutstandingRequests(blockKey);
     }
 
     // --- PRIVATE HELPERS ---

@@ -44,6 +44,10 @@ export class PieceSelector extends EventEmitter {
         }
     }
 
+    public hasPeers(pieceIdx: number) {
+        if (this.pieceToPeersMap.has(pieceIdx)) return true;
+    }
+
     public select(needed: number[], setSize: number): number[] {
         // Filter candidates that actually have at least one available peer
         const candidates = needed.filter(

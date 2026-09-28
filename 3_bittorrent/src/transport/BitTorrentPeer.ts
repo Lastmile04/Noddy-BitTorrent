@@ -681,7 +681,7 @@ export class BitTorrentPeer extends EventEmitter {
     }
 
     private dropOutstandingRequests(): void {
-        for (const [, requestState] of this.outstandingRequests) {
+        for (const requestState of this.outstandingRequests.values()) {
             this.emit("request_dropped", requestState);
         }
         this.outstandingRequests.clear();
@@ -994,5 +994,9 @@ export class BitTorrentPeer extends EventEmitter {
         payload.writeUInt32BE(begin, 4);
         payload.writeUInt32BE(length, 8);
         return payload;
+    }
+
+    public evictOutstandingRequests(key: string): void {
+        this.outstandingRequests.delete(key);
     }
 }

@@ -50,7 +50,10 @@ export type PieceErrorCode =
 
 export type SystemErrorCode = 'UNHANDLED_EXCEPTION';
 
-export type SchedulerErrorCode = 'SCHEDULER_DESTROYED';
+export type SchedulerErrorCode =
+    | 'SCHEDULER_DESTROYED'
+    | 'INVARIANT_VIOLATION'
+    ;
 
 export type AppErrorCode =
     | CodecErrorCode
