@@ -10,7 +10,7 @@ import { DownloadManager } from '../download/DownloadManager.js';
 
 //import type { TorrentMetadata } from '../codec/ast.js'; // Use your extracted TorrentMetadata interface
 const port = 4000;
-
+process.env.UV_THREADPOOL_SIZE = '64';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 

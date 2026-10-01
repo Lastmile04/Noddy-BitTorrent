@@ -2,6 +2,7 @@ import { EventEmitter } from "node:stream";
 import { PieceManagerConfig, ActivePiece } from "./types.js";
 import { ErrorFactory } from "../errors/TorrentError.js";
 import { computeSha1Hash } from "../identity/computeHash.js";
+import { TorrentStorage } from "./TorrentStorage.js";
 
 const BLOCK_SIZE = 16384; // 16 KiB standard BitTorrent block size
 
@@ -12,6 +13,8 @@ export class PieceManager extends EventEmitter {
     isMultiFile: boolean;
     pieceCount: number;
     lastPieceLength: number;
+
+    torrentStorage: TorrentStorage;
 
     totalVerifiedBytes: number;
     clientBitfield: Buffer;
@@ -25,6 +28,7 @@ export class PieceManager extends EventEmitter {
         totalLength,
         isMultiFile,
         pieceCount,
+        torrentStorage,
         initialVerifiedPieces = [] // [] to prevent type error & for resumability
     }: PieceManagerConfig) {
         super();
@@ -48,6 +52,8 @@ export class PieceManager extends EventEmitter {
         for (const idx of initialVerifiedPieces) {
             this.markPieceVerifiedLocally(idx);
         }
+
+        this.torrentStorage = torrentStorage;
     }
 
     // QUERIES

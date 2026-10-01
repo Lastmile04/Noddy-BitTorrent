@@ -3,7 +3,7 @@ import * as net from 'net';
 import { BitTorrentPeer } from "../transport/BitTorrentPeer.js";
 import { PeerBlockPayload, PeerPoolConfig, PoolListeners } from "./types.js";
 import { ErrorFactory } from "../errors/TorrentError.js";
-import { brotliCompress } from "node:zlib";
+
 
 export class PeerPoolManager extends EventEmitter {
     private peers: Map<string, BitTorrentPeer>;

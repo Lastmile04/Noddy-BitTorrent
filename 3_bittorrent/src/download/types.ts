@@ -2,6 +2,7 @@ import { Peer } from '../peers/types.js';
 import { TorrentMeta } from '../app/types.js';
 import { PieceManager } from './PieceManager.js';
 import { PeerPoolManager } from './PeerPoolManager.js';
+import { TorrentStorage } from './TorrentStorage.js';
 
 // DOWNLOAD_MANAGER
 
@@ -41,6 +42,7 @@ export interface PieceManagerConfig {
     isMultiFile: boolean
     pieceCount: number
     lastPieceLength: number
+    torrentStorage: TorrentStorage
     initialVerifiedPieces?: number[];
 }
 
@@ -128,4 +130,9 @@ export interface PieceHandler {
     complete: () => void;
 }
 
+// TORRENT_STORAGE
 
+export interface TorrentStorageConfig {
+    totalSize: number,
+    downloadPath: string
+}
