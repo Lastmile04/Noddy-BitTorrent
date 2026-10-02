@@ -107,20 +107,22 @@ export function extractInfoMeta(infoNode) {
             if (valueNode.type !== 'BYTE_STRING') throw new Error('name must be a byte string');
             name = valueNode.value.toString("utf-8");
         } else if (keyBuf.equals(KEYS.FILES)) {
-            multiFileNode = valueNode; // Store Node reference
+            multiFileNode = valueNode;
         } else if (keyBuf.equals(KEYS.LENGTH)) {
-            singleFileNode = valueNode; // Store Node reference
+            singleFileNode = valueNode;
         }
     }
 
     if (
         (!singleFileNode && !multiFileNode) ||
-        (!name) ||
-        (!Number.isInteger(pieceLength) || pieceLength <= 0) ||
-        (!pieceHashes)
+        !name ||
+        !Number.isInteger(pieceLength) || pieceLength <= 0 ||
+        !pieceHashes
     ) {
         throw new Error('Invalid Torrent: Missing required info metadata');
     }
+
+    const files = [];
 
     if (multiFileNode) {
         if (multiFileNode.type !== 'LIST') throw new Error('files must be a List');
@@ -128,43 +130,80 @@ export function extractInfoMeta(infoNode) {
         for (const fileNode of multiFileNode.value) {
             if (fileNode.type !== 'DICT') throw new Error('file entry must be a Dictionary');
 
+            let fileLength = null;
+            let filePath = null;
+
             for (const [fileKeyNode, fileNodeVal] of fileNode.value) {
                 if (fileKeyNode.type !== 'BYTE_STRING') throw new Error("file key must be a byte string");
 
                 if (fileKeyNode.value.equals(KEYS.LENGTH)) {
-                    if (fileNodeVal.type !== 'INTEGER') throw new Error('file length must be an Integer');
-                    const val = fileNodeVal.value;
-
-                    if (Number.isInteger(val) && val >= 0) {
-                        totalLength += val;
-                    } else {
-                        throw new Error('Malformed Torrent: Invalid negative file length');
+                    if (fileNodeVal.type !== 'INTEGER' || fileNodeVal.value < 0) {
+                        throw new Error('Malformed Torrent: Invalid file length');
                     }
+                    fileLength = fileNodeVal.value;
+                } else if (fileKeyNode.value.equals(KEYS.PATH)) {
+                    if (fileNodeVal.type !== 'LIST') throw new Error('file path must be a List');
+                    filePath = fileNodeVal.value.map((p) => {
+                        if (p.type !== 'BYTE_STRING') throw new Error('path segment must be a string');
+                        return p.value.toString('utf-8');
+                    });
                 }
             }
+
+            if (fileLength === null || !filePath || filePath.length === 0) {
+                throw new Error('Malformed Torrent: File entry missing length or path');
+            }
+
+            const startOffset = totalLength;
+            totalLength += fileLength;
+
+            files.push({
+                path: filePath,
+                length: fileLength,
+                startOffset,
+                endOffset: totalLength
+            });
         }
     } else {
-        if (singleFileNode.type !== 'INTEGER') throw new Error('length value must be an Integer');
+        if (singleFileNode.type !== 'INTEGER' || singleFileNode.value < 0) {
+            throw new Error('length value must be a non-negative Integer');
+        }
         totalLength = singleFileNode.value;
+        files.push({
+            path: [name],
+            length: totalLength,
+            startOffset: 0,
+            endOffset: totalLength
+        });
     }
 
+    // --- Validation Guards ---
     if (pieceHashes.length === 0 || pieceHashes.length % 20 !== 0) {
         throw new Error('Invalid piece Hash length: Must be non-zero multiple of 20');
     }
 
     pieceCount = pieceHashes.length / 20;
-    const splitHashes = splitPieceHashes(pieceHashes);
+    const expectedPieceCount = Math.ceil(totalLength / pieceLength);
 
-    lastPieceLength = (totalLength % pieceLength === 0) ? pieceLength : (totalLength % pieceLength);
+    if (pieceCount !== expectedPieceCount) {
+        throw new Error(
+            `Torrent Mismatch: Piece count in hashes (${pieceCount}) does not match expected count (${expectedPieceCount}) derived from total length`
+        );
+    }
+
+    lastPieceLength = (totalLength % pieceLength === 0)
+        ? pieceLength
+        : (totalLength % pieceLength);
 
     return {
         name,
         pieceLength,
         lastPieceLength,
-        pieceHashes: splitHashes,
+        pieceHashes: splitPieceHashes(pieceHashes),
         pieceCount,
         totalLength,
-        isMultiFile: Boolean(multiFileNode)
+        isMultiFile: Boolean(multiFileNode),
+        files // Returned for FileMapper consumption
     };
 }
 

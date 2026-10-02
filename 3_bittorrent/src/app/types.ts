@@ -8,6 +8,7 @@ export interface TorrentMeta {
     totalLength: number;
     isMultiFile: boolean;
     announceList: string[][]
+    files: TorrentFileSpec[]
 }
 
 export interface TrackerParams {
@@ -19,4 +20,11 @@ export interface TrackerParams {
     left: number;
     numwant: number;
     event: 'started' | 'stopped' | 'completed';
+}
+
+export interface TorrentFileSpec {
+    path: string[];       // Subdirectories + filename
+    length: number;       // Size in bytes
+    startOffset: number;  // Inclusive global start byte offset
+    endOffset: number;    // Exclusive global end byte offset
 }

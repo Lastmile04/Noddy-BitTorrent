@@ -8,7 +8,7 @@ export function getInfoSection(buffer: Buffer): InfoSection {
         const keyMetadata = parseString(buffer, i);
 
         if (keyMetadata.len === 4) {
-            const keyPayload = buffer.slice(keyMetadata.payloadStart, keyMetadata.end);
+            const keyPayload = buffer.subarray(keyMetadata.payloadStart, keyMetadata.end);
 
             if (keyPayload.equals(INFO_BYTES)) {
                 const valStart = keyMetadata.end;
@@ -17,7 +17,7 @@ export function getInfoSection(buffer: Buffer): InfoSection {
                 return {
                     start: valStart,
                     end: valEnd,
-                    raw: buffer.slice(valStart, valEnd)
+                    raw: buffer.subarray(valStart, valEnd)
                 };
             }
         }

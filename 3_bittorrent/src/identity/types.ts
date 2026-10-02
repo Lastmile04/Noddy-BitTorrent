@@ -11,3 +11,4 @@ export interface ParsedString {
     payloadStart: number;
     end: number;
 }
+

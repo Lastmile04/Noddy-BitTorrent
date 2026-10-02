@@ -8,7 +8,6 @@ import { urlDispatcher } from '../tracker/urlDispatcher.js';
 import { TrackerParams } from './types.js';
 import { DownloadManager } from '../download/DownloadManager.js';
 
-//import type { TorrentMetadata } from '../codec/ast.js'; // Use your extracted TorrentMetadata interface
 const port = 4000;
 process.env.UV_THREADPOOL_SIZE = '64';
 const __filename = fileURLToPath(import.meta.url);
@@ -16,8 +15,6 @@ const __dirname = path.dirname(__filename);
 
 const torrentPath: string = path.resolve(__dirname, '../../samples/debian.torrent');
 
-// TypeScript automatically infers the return type from parseTorrentFile if allowed,
-// or you can explicitly type it with your TorrentMetadata interface:
 const torrentMeta = parseTorrentFile(torrentPath);
 
 const peerId: Buffer = generatePeerId('PC', '0001');
@@ -45,5 +42,4 @@ console.log(`👥 Peers discovered: ${result.peers.length}`);
 console.log(`⏱ Announce interval: ${result.peerStats.interval}`);
 
 const peerList = result.peers;
-// await createClient(peerList, peerId, torrentMeta);
 const download = new DownloadManager({ peerList, peerId, torrentMeta });
