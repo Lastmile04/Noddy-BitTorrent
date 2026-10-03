@@ -20,6 +20,7 @@ export class PieceManager extends EventEmitter {
     clientBitfield: Buffer;
 
     private missingPieces: Set<number>;                 // set of pieces that we currently don't possess
+    private pendingWrite: Set<number>;
     private activePieces: Map<number, ActivePiece>;
 
     constructor({
@@ -48,6 +49,7 @@ export class PieceManager extends EventEmitter {
         this.missingPieces = new Set(
             Array.from({ length: pieceCount }, (_, i) => i)
         );
+        this.pendingWrite = new Set();
 
         for (const idx of initialVerifiedPieces) {
             this.markPieceVerifiedLocally(idx);
@@ -145,10 +147,11 @@ export class PieceManager extends EventEmitter {
         return (this.clientBitfield[byteIdx] & (1 << bitOffset)) !== 0;
     }
 
-    private markPieceVerifiedLocally(idx: number): void {
+    public updateBitfield(idx: number): void {
         const byteIdx = Math.floor(idx / 8);
         const bitOffset = 7 - (idx % 8);
         this.clientBitfield[byteIdx] |= (1 << bitOffset);
+        this.pendingWrite.delete(idx);
 
         if (this.missingPieces.has(idx)) {
             this.missingPieces.delete(idx);
@@ -162,12 +165,12 @@ export class PieceManager extends EventEmitter {
             const bufHash = computeSha1Hash(buf);
 
             if (this.pieceHashes[idx].equals(bufHash)) {
-                this.markPieceVerifiedLocally(idx);
                 this.emit('piece_verified', idx);
             } else {
                 this.emit('piece_verification_failed', idx);
             }
             this.activePieces.delete(idx);
+            this.pendingWrite.add(idx);
         }
         finally {
             this.activePieces.delete(idx);

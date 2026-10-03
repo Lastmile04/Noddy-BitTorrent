@@ -3,6 +3,7 @@ import { TorrentMeta } from '../app/types.js';
 import { PieceManager } from './PieceManager.js';
 import { PeerPoolManager } from './PeerPoolManager.js';
 import { TorrentStorage } from './TorrentStorage.js';
+import { TorrentFileSpec } from '../app/types.js';
 
 // DOWNLOAD_MANAGER
 
@@ -134,5 +135,6 @@ export interface PieceHandler {
 
 export interface TorrentStorageConfig {
     totalSize: number,
-    downloadPath: string
+    rootDir: string
+    fileSpecs: TorrentFileSpec[]
 }
