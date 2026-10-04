@@ -138,3 +138,9 @@ export interface TorrentStorageConfig {
     rootDir: string
     fileSpecs: TorrentFileSpec[]
 }
+
+export interface FileSlice {
+    fullPath: string;
+    fileOffset: number;
+    bytesToProcess: number;
+}
