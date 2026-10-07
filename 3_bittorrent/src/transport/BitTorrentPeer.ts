@@ -1,6 +1,14 @@
 import EventEmitter from "node:events";
 import * as net from 'net';
-import { HandshakeResult, PeerConfig, PeerState, BT_PROTOCOL_LEN, BT_PROTOCOL_BUFFER, PeerMessage, BlockRequestState } from "./types.js";
+import {
+    HandshakeResult,
+    PeerConfig,
+    PeerState,
+    BT_PROTOCOL_LEN,
+    BT_PROTOCOL_BUFFER,
+    PeerMessage,
+    BlockRequestState
+} from "./types.js";
 import { ErrorFactory } from "../errors/TorrentError.js";
 import { LifecycleStateOpts } from "./types.js";
 

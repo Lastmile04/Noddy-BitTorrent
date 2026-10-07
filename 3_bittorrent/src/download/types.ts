@@ -135,7 +135,8 @@ export interface PieceHandler {
 
 export interface TorrentStorageConfig {
     totalSize: number,
-    rootDir: string
+    rootDir: string,
+    pieceLength: number,
     fileSpecs: TorrentFileSpec[]
 }
 
