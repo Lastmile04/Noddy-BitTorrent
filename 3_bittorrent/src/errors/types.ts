@@ -63,17 +63,8 @@ export type AppErrorCode =
     | SocketErrorCode
     | PeerStateErrorCode
     | SchedulerErrorCode
+    | StorageErrorCode
     | PieceErrorCode;
-
-export type DomainOpts =
-    | 'CODEC'
-    | 'NETWORK'
-    | 'TRACKER'
-    | 'SYSTEM'
-    | 'SOCKET'
-    | 'PEER_STATE'
-    | 'PIECE_STATE'
-    | 'SCHEDULER_STATE';
 
 export interface BaseErrorOpts {
     domain: DomainOpts;
@@ -83,3 +74,37 @@ export interface BaseErrorOpts {
     context?: Record<string, unknown>;
 }
 
+export type StorageErrorCode =
+    | 'DISK_FULL'              // ENOSPC (Session-recoverable)
+    | 'PERMISSION_DENIED'      // EACCES / EPERM (Fatal)
+    | 'FILE_NOT_FOUND'         // ENOENT (Fatal)
+    | 'IO_ERROR'               // EIO (Fatal)
+    | 'TOO_MANY_OPEN_FILES'    // EMFILE / ENFILE (Internally retried)
+    | 'BAD_DESCRIPTOR'         // EBADF (Internally retried)
+    | 'STORAGE_NOT_INITIALIZED'
+    | 'STORAGE_CLOSED'
+    | 'OUT_OF_BOUNDS'
+    | 'WRITE_FAILED'
+    | 'READ_FAILED';
+
+export type DomainOpts =
+    | 'CODEC'
+    | 'NETWORK'
+    | 'TRACKER'
+    | 'SYSTEM'
+    | 'SOCKET'
+    | 'PEER_STATE'
+    | 'PIECE_STATE'
+    | 'SCHEDULER_STATE'
+    | 'STORAGE';
+
+export const STORAGE_ERROR_MAP: Record<string, StorageErrorCode> = {
+    ENOSPC: 'DISK_FULL',
+    EACCES: 'PERMISSION_DENIED',
+    EPERM: 'PERMISSION_DENIED',
+    ENOENT: 'FILE_NOT_FOUND',
+    EIO: 'IO_ERROR',
+    EBADF: 'BAD_DESCRIPTOR',
+    EMFILE: 'TOO_MANY_OPEN_FILES',
+    ENFILE: 'TOO_MANY_OPEN_FILES',
+};

@@ -9,6 +9,8 @@ import {
     SchedulerErrorCode,
     SocketErrorCode,
     TrackerErrorCode,
+    StorageErrorCode,
+    STORAGE_ERROR_MAP
 } from "./types.js";
 
 export class TorrentError extends Error {
@@ -131,6 +133,43 @@ export const ErrorFactory = {
 
         return ErrorFactory.normalize(err);
     },
+    storage: (code: StorageErrorCode, message: string, context?: Record<string, unknown>, cause?: unknown) => {
+        return new TorrentError({
+            domain: 'STORAGE',
+            code,
+            message,
+            context,
+            cause,
+        });
+    },
+
+    fromStorageError: (err: unknown, context?: Record<string, unknown>): TorrentError => {
+        if (err instanceof TorrentError) return err;
+
+        const sysErr = err as NodeJS.ErrnoException;
+        if (sysErr?.code && sysErr.code in STORAGE_ERROR_MAP) {
+            const mappedCode = STORAGE_ERROR_MAP[sysErr.code];
+            const torrentErr = ErrorFactory.storage(
+                mappedCode,
+                sysErr.message || 'Underlying storage filesystem error',
+                { sysCode: sysErr.code, ...context },
+                err
+            );
+
+            // ENOSPC is operational (Download Manager can pause torrent, free space, and resume)
+            // Hard permission/path failures render the torrent non-operational
+            if (sysErr.code === 'ENOSPC') {
+                torrentErr.isOperational = true;
+            } else if (['EACCES', 'EPERM', 'ENOENT', 'EIO'].includes(sysErr.code)) {
+                torrentErr.isOperational = false;
+            }
+
+            return torrentErr;
+        }
+
+        return ErrorFactory.normalize(err);
+    },
+
 
     normalize: (err: unknown): TorrentError => {
         if (err instanceof TorrentError) return err;
