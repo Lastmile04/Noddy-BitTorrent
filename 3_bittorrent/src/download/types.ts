@@ -44,7 +44,6 @@ export interface PieceManagerConfig {
     pieceCount: number
     lastPieceLength: number
     torrentStorage: TorrentStorage
-    initialVerifiedPieces?: number[];
 }
 
 // PEER_POOL_MANAGER

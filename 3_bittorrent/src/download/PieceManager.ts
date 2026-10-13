@@ -29,8 +29,7 @@ export class PieceManager extends EventEmitter {
         totalLength,
         isMultiFile,
         pieceCount,
-        torrentStorage,
-        initialVerifiedPieces = [] // [] to prevent type error & for resumability
+        torrentStorage
     }: PieceManagerConfig) {
         super();
         this.pieceHashes = pieceHashes;
@@ -50,12 +49,11 @@ export class PieceManager extends EventEmitter {
             Array.from({ length: pieceCount }, (_, i) => i)
         );
         this.pendingWrite = new Set();
-
-        for (const idx of initialVerifiedPieces) {
-            this.markPieceVerifiedLocally(idx);
-        }
-
         this.torrentStorage = torrentStorage;
+    }
+
+    public init(): void {
+        this.initiateBitField();
     }
 
     // QUERIES
@@ -89,6 +87,7 @@ export class PieceManager extends EventEmitter {
         if (this.hasPiece(pieceIdx)) return;
 
         if (!this.activePieces.has(pieceIdx)) {
+            this.missingPieces.delete(pieceIdx);
             this.activePieces.set(pieceIdx, {
                 buffer: Buffer.alloc(pieceSize),
                 downloadedBytes: 0,
@@ -105,7 +104,7 @@ export class PieceManager extends EventEmitter {
         active.downloadedBytes += block.length;
 
         if (active.downloadedBytes === pieceSize) {
-            this.verifyPiece(pieceIdx, active.buffer);
+            this.verifyAndWritePiece(pieceIdx, active.buffer);
         }
 
     }
@@ -159,21 +158,54 @@ export class PieceManager extends EventEmitter {
         }
     }
 
-
-    private verifyPiece(idx: number, buf: Buffer): void {
+    private async verifyAndWritePiece(idx: number, buf: Buffer): Promise<void> {
         try {
             const bufHash = computeSha1Hash(buf);
 
-            if (this.pieceHashes[idx].equals(bufHash)) {
-                this.emit('piece_verified', idx);
-            } else {
+            if (!this.pieceHashes[idx].equals(bufHash)) {
+                this.missingPieces.add(idx);
                 this.emit('piece_verification_failed', idx);
+                return; // Exit early
             }
-            this.activePieces.delete(idx);
+
+            // Hash passed, now attempting persistence
             this.pendingWrite.add(idx);
-        }
-        finally {
+            this.emit('piece_hash_verified', idx);
+
+            await this.torrentStorage.writeInto(idx, buf);
+
+            // Persistence succeeded - promote to fully available
+            this.updateBitfield(idx); // This clears pendingWrite and updates bitfield
+            this.emit('piece_persisted', idx);
+
+        } catch (error) {
+            // Normalize the raw system error into a structured TorrentError
+            const torrentErr = ErrorFactory.fromStorageError(error, { pieceIndex: idx });
+
+            // Disk write failed! Clean up pendingWrite and allow retry/re-download
+            this.pendingWrite.delete(idx);
+            this.missingPieces.add(idx);
+
+            // Pass the structured TorrentError to your event listeners
+            this.emit('storage_write_failed', idx, torrentErr);
+        } finally {
             this.activePieces.delete(idx);
+        }
+    }
+
+    private async initiateBitField(): Promise<void> {
+        let allocBuf = Buffer.alloc(this.pieceLength);
+        for (let pieceIdx = 0; pieceIdx < this.pieceCount; pieceIdx++) {
+            const length = pieceIdx === this.pieceCount - 1 ? this.lastPieceLength : this.pieceLength;
+
+            const resultBuf = await this.torrentStorage.readFrom(pieceIdx, length, allocBuf);
+            const validBytes = resultBuf.subarray(0, length);
+            const bufHash = computeSha1Hash(validBytes);
+
+            if (this.pieceHashes[pieceIdx].equals(bufHash)) {
+                this.updateBitfield(pieceIdx);
+                this.missingPieces.delete(pieceIdx); // since initially every piece is assumed to be missing
+            }
         }
     }
 }

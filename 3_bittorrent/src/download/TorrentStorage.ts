@@ -77,7 +77,20 @@ export class TorrentStorage extends EventEmitter {
 
             for (const slice of rangeSlices) {
                 const handle = await this.getHandle(slice.fullPath);
-                await handle.write(pieceBuf, bufferOffset, slice.bytesToProcess, slice.fileOffset);
+                const { bytesWritten } = await handle.write(
+                    pieceBuf,
+                    bufferOffset,
+                    slice.bytesToProcess,
+                    slice.fileOffset
+                );
+
+                if (bytesWritten < slice.bytesToProcess) {
+                    throw ErrorFactory.storage(
+                        "WRITE_FAILED",
+                        `Incomplete disk write: expected ${slice.bytesToProcess} bytes, got ${bytesWritten}`,
+                        { fullPath: slice.fullPath, fileOffset: slice.fileOffset }
+                    );
+                }
                 bufferOffset += slice.bytesToProcess;
             }
         });
@@ -86,7 +99,7 @@ export class TorrentStorage extends EventEmitter {
     /**
      * Reads a piece or block back from the mapped storage files.
      */
-    public async readFrom(pieceIdx: number, length: number, blockOffsetWithinPiece = 0): Promise<Buffer> {
+    public async readFrom(pieceIdx: number, length: number, allocatedBuf: Buffer, blockOffsetWithinPiece = 0): Promise<Buffer> {
         return this.executeIO(async () => {
             const globalOffset = pieceIdx * this.pieceLength + blockOffsetWithinPiece;
             if (globalOffset + length > this.totalSize) {
@@ -99,7 +112,7 @@ export class TorrentStorage extends EventEmitter {
             }
 
             const rangeSlices = this.resolveFileRanges(globalOffset, length);
-            const resultBuf = Buffer.alloc(length);
+            const resultBuf = allocatedBuf;
             let bufferOffset = 0;
 
             for (const slice of rangeSlices) {
