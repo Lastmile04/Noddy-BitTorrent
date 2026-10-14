@@ -109,6 +109,12 @@ export class PieceManager extends EventEmitter {
 
     }
 
+    public async readBlock(index: number, begin: number, length: number): Promise<Buffer | void> {
+        if (!this.hasPiece(index)) return;
+        const pieceBuf = Buffer.alloc(length);
+        return await this.torrentStorage.readFrom(index, length, pieceBuf, begin);
+    }
+
 
     public findNeeded(): number[] {
         return Array.from(this.missingPieces);
