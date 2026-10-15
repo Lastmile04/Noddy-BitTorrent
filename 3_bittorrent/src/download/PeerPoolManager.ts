@@ -83,25 +83,24 @@ export class PeerPoolManager extends EventEmitter {
 
     /** Propagates invariant violations (e.g. INVALID_CANCEL) to caller */
     public cancelRequest(key: string, index: number, begin: number, length: number): void {
-        const peer = this.getOrThrow(key);
+        const peer = this.peers.get(key);
         if (!peer || peer.lifecycleState !== 'READY') return;
         peer.cancel(index, begin, length);
     }
 
     /** Revokes interest from peer if READY */
     public revokeInterest(key: string): void {
-        const peer = this.getOrThrow(key);
+        const peer = this.peers.get(key);
         if (!peer || peer.lifecycleState !== 'READY') return;
         peer.uninterested();
     }
-    
-    /** Announce a persisted piece to the entire pool*/
+
+    /** Announces piece availability to all the inerested peers in the peer pool*/
     public announcePiece(idx: number): void {
         for (const peer of this.peers.values()) {
             try {
                 peer.have(idx);
             } catch (err) {
-                // Normalize the error into a structured TorrentError
                 const torrentErr = ErrorFactory.fromSocketError(err);
 
                 if (!torrentErr.isOperational) {
@@ -111,13 +110,6 @@ export class PeerPoolManager extends EventEmitter {
             }
         }
     }
-
-    public sendBitfield(key: string, bitfiledBuf: Buffer): void {
-        const peer = this.getOrThrow(key);  
-        if (!peer || peer.lifecycleState !== 'READY') return;
-        peer.bitfield(bitfiledBuf);
-    }
-
 
     // --- LIFECYCLE & TEARDOWN ---
 
