@@ -43,6 +43,10 @@ export class PeerPoolManager extends EventEmitter {
         });
     }
 
+    public getInterested(): BitTorrentPeer[] {
+        return Array.from(this.peers.values()).filter(peer => peer.remotePeerState.peerInterested === true);
+    }
+
     // --- COMMANDS ---
 
     /** Strict: Requires an active READY peer. Propagates invariant & transport errors to caller. */

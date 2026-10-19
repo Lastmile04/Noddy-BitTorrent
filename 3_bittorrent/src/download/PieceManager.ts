@@ -210,7 +210,6 @@ export class PieceManager extends EventEmitter {
 
             if (this.pieceHashes[pieceIdx].equals(bufHash)) {
                 this.updateBitfield(pieceIdx);
-                this.missingPieces.delete(pieceIdx); // since initially every piece is assumed to be missing
             }
         }
     }
