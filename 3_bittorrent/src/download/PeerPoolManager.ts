@@ -47,6 +47,10 @@ export class PeerPoolManager extends EventEmitter {
         return Array.from(this.peers.values()).filter(peer => peer.remotePeerState.peerInterested === true);
     }
 
+    public getAllPeers(): Map<string, BitTorrentPeer> {
+        return this.peers;
+    }
+
     // --- COMMANDS ---
 
     /** Strict: Requires an active READY peer. Propagates invariant & transport errors to caller. */
@@ -113,6 +117,19 @@ export class PeerPoolManager extends EventEmitter {
                 this.emit('peer_error', { peer, error: torrentErr });
             }
         }
+    }
+
+    public unchokePeer(key: string): void {
+        const peer = this.peers.get(key);
+        if (!peer || peer.lifecycleState !== 'READY') return;
+        peer.unchoke();
+    }
+
+    public chokePeer(key: string): void {
+        const peer = this.peers.get(key);
+        if (!peer || peer.lifecycleState !== 'READY') return;
+        peer.choke();
+
     }
 
     // --- LIFECYCLE & TEARDOWN ---

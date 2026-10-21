@@ -1,5 +1,7 @@
 import EventEmitter from "node:events";
 import * as net from 'net';
+import { RollingRateTracker } from "./RollingRateTracker.js";
+
 import {
     HandshakeResult,
     PeerConfig,
@@ -33,6 +35,9 @@ export class BitTorrentPeer extends EventEmitter {
     pieceCount: number;
     MAX_FRAME_SIZE: number;
     private outstandingRequests: Map<string, BlockRequestState>;
+
+    private downloadTracker = new RollingRateTracker(10000);
+    private uploadTracker = new RollingRateTracker(10000);
 
     constructor({
         socket,
@@ -77,6 +82,8 @@ export class BitTorrentPeer extends EventEmitter {
             bitfield: undefined,
             downloadRate: 0
         };
+
+
     }
 
     // --- Arrow Function Event Handlers ---
@@ -588,6 +595,7 @@ export class BitTorrentPeer extends EventEmitter {
                     block: msgObj.block,
                 });
                 this.lastPeerActive = Date.now();
+                this.downloadTracker.addBytes(msgObj.block.length);
                 break;
             }
 
@@ -928,6 +936,7 @@ export class BitTorrentPeer extends EventEmitter {
         } catch (err) {
             throw err;
         }
+        this.uploadTracker.addBytes(blockLength);
     }
 
     public destroy(err?: Error): void {
@@ -1006,5 +1015,13 @@ export class BitTorrentPeer extends EventEmitter {
 
     public evictOutstandingRequests(key: string): void {
         this.outstandingRequests.delete(key);
+    }
+
+    public getDownloadRate(): number {
+        return this.downloadTracker.getRate();
+    }
+
+    public getUploadRate(): number {
+        return this.uploadTracker.getRate();
     }
 }

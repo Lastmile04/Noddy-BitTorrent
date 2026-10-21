@@ -3,7 +3,7 @@ import { RateSample } from "./types.js";
 export class RollingRateTracker {
     private readonly windowMs: number;
     private events: RateSample[] = [];
-    private currentByteSum: number = 0;
+    private currentByteSum: number = 0; 
 
     constructor(windowMs: number = 10000) {
         this.windowMs = windowMs;
@@ -33,7 +33,7 @@ export class RollingRateTracker {
             this.currentByteSum = 0;
             return 0
         }
-
+       
         const windowSec = this.windowMs / 1000;
         return this.currentByteSum / windowSec;
     }
