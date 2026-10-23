@@ -8,7 +8,7 @@ import { ErrorFactory } from "../errors/TorrentError.js";
 
 export class TorrentStorage extends EventEmitter {
     public readonly totalSize: number;
-    private readonly rootDir: string;
+    private rootDir: string;
     private readonly fileSpecs: TorrentFileSpec[];
     private readonly pieceLength: number;
 
@@ -228,5 +228,9 @@ export class TorrentStorage extends EventEmitter {
         if (this.isClosed) {
             throw ErrorFactory.storage("STORAGE_CLOSED", "Cannot perform I/O operations on closed storage");
         }
+    }
+
+    public updateRootDir(dir: string): void {
+        this.rootDir = dir;
     }
 }

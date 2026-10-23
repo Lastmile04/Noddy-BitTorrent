@@ -193,7 +193,7 @@ export class PieceManager extends EventEmitter {
             this.missingPieces.add(idx);
 
             // Pass the structured TorrentError to your event listeners
-            this.emit('storage_write_failed', idx, torrentErr);
+            this.emit('storage_write_failed', { idx, torrentErr });
         } finally {
             this.activePieces.delete(idx);
         }

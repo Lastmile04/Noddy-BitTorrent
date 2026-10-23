@@ -7,6 +7,13 @@ import { TorrentFileSpec } from '../app/types.js';
 
 // DOWNLOAD_MANAGER
 
+export type ClientStateType =
+    "Started" |
+    "Starting" |
+    "Initialized" |
+    "UnInitialized" |
+    "Initializing";
+
 export interface DownloadManagerConfig {
     peerList: Peer[]
     peerId: Buffer
@@ -55,7 +62,7 @@ export interface PeerPoolConfig {
     totalLength: number
     pieceCount: number
     maxPeers?: number
-    isPieceNeeded: (index: number) => boolean;
+    isPieceNeeded: (index: number) => boolean
 }
 
 

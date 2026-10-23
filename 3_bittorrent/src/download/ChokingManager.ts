@@ -1,10 +1,9 @@
-import EventEmitter from "node:events";
 import { BitTorrentPeer } from "../transport/BitTorrentPeer.js";
 import { PeerPoolManager } from "./PeerPoolManager.js";
 
 type ClientPhase = "Leecher" | "Seeder";
 
-export class ChokingManager extends EventEmitter {
+export class ChokingManager {
     private readonly regularIntervalMs: number = 10000;     // 10 seconds
     private readonly optimisticIntervalMs: number = 30000;  // 30 seconds
 
@@ -17,7 +16,6 @@ export class ChokingManager extends EventEmitter {
     private CurrentClientPhase: ClientPhase = "Leecher";
 
     constructor(pool: PeerPoolManager) {
-        super();
         this.pool = pool;
     }
 

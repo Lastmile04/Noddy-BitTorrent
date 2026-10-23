@@ -1,6 +1,4 @@
-import EventEmitter from "node:events";
-
-export class PieceSelector extends EventEmitter {
+export class PieceSelector {
 
     public readonly pieceCount: number;
     public readonly availabilityArray: Uint16Array;
