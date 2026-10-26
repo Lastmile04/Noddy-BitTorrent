@@ -4,13 +4,11 @@ import { PeerPoolManager } from "./PeerPoolManager.js";
 type ClientPhase = "Leecher" | "Seeder";
 
 export class ChokingManager {
-    private readonly regularIntervalMs: number = 10000;     // 10 seconds
-    private readonly optimisticIntervalMs: number = 30000;  // 30 seconds
+    private readonly intervalMs: number = 10000;     // 10 seconds
+    private timer: NodeJS.Timeout | null = null;
+    private tickCount: number = 0;
 
-    private regularTimer: NodeJS.Timeout | null = null;
-    private optimisticTimer: NodeJS.Timeout | null = null;
     private optimisticPeer: BitTorrentPeer | null = null;
-
     private readonly maxUnchoked: number = 4; // Total slots (3 Regular + 1 Optimistic)
     private pool: PeerPoolManager;
     private CurrentClientPhase: ClientPhase = "Leecher";
@@ -20,18 +18,32 @@ export class ChokingManager {
     }
 
     public start(): void {
-        if (this.regularTimer || this.optimisticTimer) return;
+        if (this.timer) return;
 
-        this.regularTimer = setInterval(() => {
+        this.timer = setInterval(() => {
+            this.tickCount++;
+
+            if (this.tickCount % 3 === 0) this.updateOptimisticPeer();
             this.runRegularUnchoke();
-        }, this.regularIntervalMs);
 
-        this.optimisticTimer = setInterval(() => {
-            this.runOptimisticUnchoke();
-        }, this.optimisticIntervalMs);
+        }, this.intervalMs);
     }
 
-    private runRegularUnchoke(): void {
+    private updateOptimisticPeer(): void {
+        const candidates = this.pool.getInterested().filter(peer =>
+            this.isPeerEligible(peer) &&
+            peer.remotePeerState.amChoking && // Must currently be choked to be a candidate for optimistic unchoke
+            peer !== this.optimisticPeer
+        );
+
+        if (candidates.length === 0) this.optimisticPeer = null;
+        else {
+            const randomIndex = Math.floor(Math.random() * candidates.length);
+            this.optimisticPeer = candidates[randomIndex];
+        }
+    }
+
+    private getDesiredUnchokedPeers(): Set<BitTorrentPeer> {
         // Validate optimistic peer eligibility first
         if (this.optimisticPeer && !this.optimisticPeer.remotePeerState.peerInterested) {
             this.optimisticPeer = null;
@@ -47,6 +59,11 @@ export class ChokingManager {
             if (this.CurrentClientPhase === "Leecher") {
                 return b.getDownloadRate() - a.getDownloadRate();
             } else {
+                const waitTimeA = a.remotePeerState.lastUnchokedAt === 0 ? Infinity : Date.now() - a.remotePeerState.lastUnchokedAt;
+                const waitTimeB = b.remotePeerState.lastUnchokedAt === 0 ? Infinity : Date.now() - b.remotePeerState.lastUnchokedAt;
+
+                if (waitTimeA !== waitTimeB) return waitTimeB - waitTimeA;
+
                 return b.getUploadRate() - a.getUploadRate();
             }
         });
@@ -60,6 +77,11 @@ export class ChokingManager {
             topPeerSet.add(this.optimisticPeer);
         }
 
+        return topPeerSet;
+    }
+
+
+    private reconilePool(topPeerSet: Set<BitTorrentPeer>): void {
         // Reconcile across ALL peers in the pool with state-change guards
         for (const [peerKey, peer] of this.pool.getAllPeers().entries()) {
             const shouldBeUnchoked = topPeerSet.has(peer);
@@ -74,22 +96,9 @@ export class ChokingManager {
         }
     }
 
-
-    private runOptimisticUnchoke(): void {
-        const candidates = this.pool.getInterested().filter(peer =>
-            this.isPeerEligible(peer) &&
-            peer.remotePeerState.amChoking && // Must currently be choked to be a candidate for optimistic unchoke
-            peer !== this.optimisticPeer
-        );
-
-        if (candidates.length === 0) {
-            this.optimisticPeer = null;
-            return;
-        }
-
-        const randomIndex = Math.floor(Math.random() * candidates.length);
-        this.optimisticPeer = candidates[randomIndex];
-        this.runRegularUnchoke();
+    private runRegularUnchoke(): void {
+        const topPeerSet = this.getDesiredUnchokedPeers();
+        this.reconilePool(topPeerSet);
     }
 
     private isPeerEligible(peer: BitTorrentPeer): boolean {
@@ -99,10 +108,13 @@ export class ChokingManager {
         );
     }
 
+    public switchPhase(): void {
+        this.CurrentClientPhase = 'Seeder';
+    }
+
     public stop(): void {
-        if (this.regularTimer) clearInterval(this.regularTimer);
-        if (this.optimisticTimer) clearInterval(this.optimisticTimer);
-        this.regularTimer = null;
-        this.optimisticTimer = null;
+        if (this.timer) clearInterval(this.timer);
+        this.timer = null;
+        this.tickCount = 0;
     }
 }

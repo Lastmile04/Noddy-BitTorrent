@@ -32,7 +32,7 @@ export interface DownloadSession {
     downloadedBytes: number
     completedBytes: number
 
-    status: "idle" | "downloading" | "completed" | "failed"
+    status: "idle" | "downloading" | "completed" | "failed" | "seeding";
 }
 
 // PIECE_MANAGER

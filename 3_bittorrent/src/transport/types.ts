@@ -26,6 +26,7 @@ export interface PeerState {
     // Bitfield & Metrics
     bitfield?: Buffer;
     downloadRate: number;
+    lastUnchokedAt: number;
 }
 
 export interface HandshakeResult {

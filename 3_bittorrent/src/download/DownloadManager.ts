@@ -119,7 +119,7 @@ export class DownloadManager extends EventEmitter {
 
                 this.ClinetState = "Starting";
 
-                // 1. Construct Managers
+                // Construct Managers
                 const pieceData: PieceManagerConfig = {
                     pieceLength: this.torrentMeta.pieceLength,
                     pieceHashes: this.torrentMeta.pieceHashes,
@@ -156,7 +156,7 @@ export class DownloadManager extends EventEmitter {
 
                 this.chokingManager = new ChokingManager(this.peerPoolManager);
 
-                // 2. Attach Listeners ONCE here during construction phase to prevent duplicate bindings on retry
+                // Attach Listeners ONCE here during construction phase to prevent duplicate bindings on retry
                 this.attachListeners();
 
                 this.ClinetState = 'Started';
@@ -166,6 +166,8 @@ export class DownloadManager extends EventEmitter {
                 this.downloadPhase();
             } catch (err) {
                 this.startPromise = null;
+                this.ClinetState = this.torrentStorage ? "Initialized" : "UnInitialized";
+
                 this.session.status = "failed";
                 this.emit('sessionUpdate', this.session);
                 throw err;
@@ -183,78 +185,130 @@ export class DownloadManager extends EventEmitter {
 
         this.pieceScheduler.start();
         this.chokingManager.start();
+
     }
 
-    private attachListeners(): void {
-        this.peerPoolManager.on(
-            'peer_error', ({ peer, error }: { peer: BitTorrentPeer, error: Error }) => {
-                this.session.failedPeers++;
-                this.session.activePeers = Math.max(0, this.session.activePeers - 1);
+    private handlePeerError = ({ peer, error }: { peer: BitTorrentPeer, error: Error }) => {
+        this.session.failedPeers++;
+        this.session.activePeers = Math.max(0, this.session.activePeers - 1);
 
-                console.warn(`[DownloadManager] Peer error from ${peer.remotePeerState.ip}:${peer.remotePeerState.port}: ${error.message}`);
-                this.emit('sessionUpdate', this.session);
-            });
+        console.warn(`[DownloadManager] Peer error from ${peer.remotePeerState.ip}:${peer.remotePeerState.port}: ${error.message}`);
+        this.emit('sessionUpdate', this.session);
+    };
 
-        this.pieceManager.on('piece_persisted', (idx: number) => {
-            let persistedBytes: number = this.torrentMeta.pieceLength;
-            if (idx === this.torrentMeta.pieceCount - 1) persistedBytes = this.torrentMeta.lastPieceLength;
-            this.session.completedBytes += persistedBytes;
-            this.peerPoolManager.announcePiece(idx);
+    private handlePiecePersisted = (idx: number) => {
+        let persistedBytes: number = this.torrentMeta.pieceLength;
+        if (idx === this.torrentMeta.pieceCount - 1) persistedBytes = this.torrentMeta.lastPieceLength;
+        this.session.completedBytes += persistedBytes;
+        this.peerPoolManager.announcePiece(idx);
+        this.emit('sessionUpdate', this.session);
+    };
+
+    private handleStorageWriteFailed = ({ idx, torrentErr }: { idx: number, torrentErr: any }) => {
+        console.error(`[DownloadManager] Failed to write piece ${idx}: ${torrentErr.message}`);
+
+        if (torrentErr.code === 'ENOSPC') {
+            console.warn(`[DownloadManager] Disk is full! Halting download session.`);
+            this.haltDownload();
+        }
+
+        this.session.status = 'failed';
+        this.emit('error', torrentErr);
+        this.emit('sessionUpdate', this.session);
+    };
+
+    private handlePieceHashVerified = (idx: number) => {
+        this.emit('piece_hash_verified', idx);
+    };
+
+    private handleSchedulerError = (err: any) => {
+        if (err.code === 'PROTOCOL_VIOLATION') {
+            this.session.failedPeers++;
+            console.warn(`[DownloadManager] Protocol violation caught: ${err.message}`);
             this.emit('sessionUpdate', this.session);
-        });
-
-        this.pieceManager.on('storage_write_failed', ({ idx, torrentErr }) => {
-            console.error(`[DownloadManager] Failed to write piece ${idx}: ${torrentErr.message}`);
-
-            if (torrentErr.code === 'ENOSPC') {
-                console.warn(`[DownloadManager] Disk is full! Halting download session.`);
-                this.haltDownload();
-            }
+        } else if (err.code === 'INVARIANT_VIOLATION' || err.code === 'SCHEDULER_STATE') {
+            console.error(`[DownloadManager] CRITICAL Scheduler invariant error: ${err.message}`);
 
             this.session.status = 'failed';
-            this.emit('error', torrentErr);
+            this.emit('error', err);
             this.emit('sessionUpdate', this.session);
-        });
+        } else {
+            console.error(`[DownloadManager] Unhandled scheduler error:`, err);
+        }
+    };
 
-        this.pieceManager.on('piece_hash_verified', (idx) => this.emit('piece_hash_verified', idx));
+    private handleSchedulerComplete = () => {
+        this.session.status = 'seeding';
+        this.session.completedBytes = this.session.totalLength;
 
-        this.pieceScheduler.on('error', (err: any) => {
-            if (err.code === 'PROTOCOL_VIOLATION') {
-                this.session.failedPeers++;
-                console.warn(`[DownloadManager] Protocol violation caught: ${err.message}`);
-                this.emit('sessionUpdate', this.session);
-            } else if (err.code === 'INVARIANT_VIOLATION' || err.code === 'SCHEDULER_STATE') {
-                console.error(`[DownloadManager] CRITICAL Scheduler invariant error: ${err.message}`);
+        console.log(`[DownloadManager] Download complete! Transitioning to Seeding mode for: ${this.session.torrentName}`);
 
-                this.session.status = 'failed';
-                this.emit('error', err);
-                this.emit('sessionUpdate', this.session);
-            } else {
-                console.error(`[DownloadManager] Unhandled scheduler error:`, err);
-            }
-        });
+        if (this.pieceScheduler) {
+            this.pieceScheduler.stop();
+        }
+        this.chokingManager.switchPhase();
+        this.emit('completed', this.session);
+        this.emit('sessionUpdate', this.session);
+    };
 
-        this.pieceScheduler.on('complete', () => {
-            this.session.status = 'completed';
-            this.session.completedBytes = this.session.totalLength;
+    private attachListeners(): void {
+        if (this.peerPoolManager) {
+            this.peerPoolManager.on('peer_error', this.handlePeerError);
+        }
 
-            console.log(`[DownloadManager] Download completed successfully for: ${this.session.torrentName}`);
+        if (this.pieceManager) {
+            this.pieceManager.on('piece_persisted', this.handlePiecePersisted);
+            this.pieceManager.on('storage_write_failed', this.handleStorageWriteFailed);
+            this.pieceManager.on('piece_hash_verified', this.handlePieceHashVerified);
+        }
 
-            this.emit('completed', this.session);
-            this.emit('sessionUpdate', this.session);
-        });
+        if (this.pieceScheduler) {
+            this.pieceScheduler.on('error', this.handleSchedulerError);
+            this.pieceScheduler.on('complete', this.handleSchedulerComplete);
+        }
+    }
+
+    private detachListeners(): void {
+        if (this.peerPoolManager) {
+            this.peerPoolManager.off('peer_error', this.handlePeerError);
+        }
+
+        if (this.pieceManager) {
+            this.pieceManager.off('piece_persisted', this.handlePiecePersisted);
+            this.pieceManager.off('storage_write_failed', this.handleStorageWriteFailed);
+            this.pieceManager.off('piece_hash_verified', this.handlePieceHashVerified);
+        }
+
+        if (this.pieceScheduler) {
+            this.pieceScheduler.off('error', this.handleSchedulerError);
+            this.pieceScheduler.off('complete', this.handleSchedulerComplete);
+        }
     }
 
     private haltDownload(): void {
         // Stop active scheduling and choking loops to halt disk/network activity
         if (this.pieceScheduler) {
-            // e.g., this.pieceScheduler.stop();
+            this.pieceScheduler.stop();
         }
         if (this.chokingManager) {
-            // e.g., this.chokingManager.stop();
+            this.chokingManager.stop();
         }
         if (this.peerPoolManager) {
-            // e.g., this.peerPoolManager.closeAll();
+            this.peerPoolManager.shutdown();
         }
+        if (this.torrentStorage) {
+            this.torrentStorage.close();
+        }
+
+        this.detachListeners();
+    }
+
+    public async stop(): Promise<void> {
+        if (this.ClinetState !== 'Started') return;
+        this.haltDownload();
+        this.ClinetState = 'Initialized'; // or 'UnInitialized' depending on design
+        this.session.status = 'idle'; // or 'stopped'
+        this.startPromise = null;
+        this.emit('sessionUpdate', this.session);
     }
 }

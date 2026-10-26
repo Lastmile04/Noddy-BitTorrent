@@ -20,17 +20,24 @@ export class BitTorrentPeer extends EventEmitter {
     socket: net.Socket;
     peerId: Buffer;
     infoHash: Buffer;
+
     pieceLength: number;
     totalLength: number;
+
     handshakeComplete: boolean;
     HANDSHAKE_TIMEOUT: number;
+
     connectTimeout?: NodeJS.Timeout;
+
     bufQueue: Buffer[];
     bufferedBytes: number;
+
     lastPeerActive?: number;
     handledFailure: boolean;
+
     lifecycleState: LifecycleStateOpts;
     connectResolve?: () => void;
+
     connectReject?: (reason: Error) => void;
     pieceCount: number;
     MAX_FRAME_SIZE: number;
@@ -55,16 +62,22 @@ export class BitTorrentPeer extends EventEmitter {
         this.infoHash = infoHash;
         this.pieceLength = pieceLength;
         this.totalLength = totalLength;
+
         this.handshakeComplete = false;
+
         this.HANDSHAKE_TIMEOUT = 10000;
         this.connectTimeout = undefined;
+
         this.bufQueue = [];
         this.bufferedBytes = 0;
+
         this.lastPeerActive = undefined;
         this.handledFailure = false;
         this.lifecycleState = 'NEW';
+
         this.connectResolve = undefined;
         this.connectReject = undefined;
+
         this.pieceCount = pieceCount;
         this.MAX_FRAME_SIZE = 1048576;
         this.outstandingRequests = new Map();
@@ -80,7 +93,8 @@ export class BitTorrentPeer extends EventEmitter {
             peerInterested: false,
 
             bitfield: undefined,
-            downloadRate: 0
+            downloadRate: 0,
+            lastUnchokedAt: 0
         };
 
 
@@ -791,6 +805,7 @@ export class BitTorrentPeer extends EventEmitter {
         if (!this.remotePeerState.amChoking) return;
         this.sendPacket(1);
         this.remotePeerState.amChoking = false;
+        this.remotePeerState.lastUnchokedAt = Date.now();
     }
 
     public interested(): void {
