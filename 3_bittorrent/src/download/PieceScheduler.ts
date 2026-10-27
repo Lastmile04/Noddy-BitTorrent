@@ -40,9 +40,9 @@ export class PieceScheduler extends EventEmitter {
     private boundPieceHandlers!: PieceHandler;
 
     // Operational Tunables
-    private readonly MAX_REQUEST_PER_PEER: number = 8;
+    private readonly MAX_REQUEST_PER_PEER: number = 32;
     private readonly BLOCK_SIZE: number = 16384;
-    private readonly CURRENT_WORKING_LIMIT: number = 8;
+    private readonly CURRENT_WORKING_LIMIT: number = 64;
     private readonly BLOCK_TIMEOUT_MS: number = 15000;
     private readonly WORKING_PIECE_TIMEOUT_MS: number = 60000;
     private FINISHED_BLOCKS: number = 0;
@@ -156,6 +156,42 @@ export class PieceScheduler extends EventEmitter {
         return this.mode;
     }
 
+    private updatePeerInterests(): void {
+        const needed = this.pieceManager.findNeeded();
+        if (needed.length === 0) return;
+
+        for (const [key, peer] of this.peerPoolManager.getAllPeers().entries()) {
+            if (peer.lifecycleState !== 'READY') continue;
+
+            let hasNeeded = false;
+            const bitfield = peer.remotePeerState.bitfield;
+            if (bitfield) {
+                // Check if this peer has at least one piece that our client currently needs
+                for (const pieceIdx of needed) {
+                    if (this.peerPoolManager.checkPeerBitfield(peer, pieceIdx)) {
+                        hasNeeded = true;
+                        break;
+                    }
+                }
+            }
+
+            // If they have what we need and we aren't marked as interested yet, tell them!
+            if (hasNeeded && !peer.remotePeerState.amInterested) {
+                try {
+                    this.peerPoolManager.expressInterest(key);
+                } catch {
+                    // Suppress transient state errors
+                }
+            } else if (!hasNeeded && peer.remotePeerState.amInterested) {
+                try {
+                    this.peerPoolManager.revokeInterest(key);
+                } catch {
+                    // Suppress transient state errors
+                }
+            }
+        }
+    }
+
     private schedule(): void {
         if (!this.isRunning || this.isDestroyed || this.hasEmittedComplete) return;
 
@@ -179,6 +215,8 @@ export class PieceScheduler extends EventEmitter {
                     const selectedPieces = this.selectPiecesForWorkingSet(needed, selectionCapacity);
                     this.addWorkingPiece(selectedPieces);
                 }
+
+                this.updatePeerInterests();
 
                 const eligiblePeers = this.getEligiblePeers();
                 this.queueRequests();
@@ -481,11 +519,16 @@ export class PieceScheduler extends EventEmitter {
 
         const pieceState = this.workingPieceMap.get(data.index);
         if (!pieceState) {
+            // If we already verified/completed this piece, safely ignore the late/duplicate block
+            if (this.pieceManager.hasPiece(data.index)) {
+                this.inflightMap.delete(blockKey);
+                this.peerPoolManager.removeOutstandingRequestsFromPeer(data.peerKey, blockKey);
+                return;
+            }
+
+            // Otherwise, it was evicted due to a timeout or state change; clean up safely without crashing
+            this.inflightMap.delete(blockKey);
             this.evictInflightForPeer(data.peerKey);
-            this.emit('error', ErrorFactory.scheduler_state(
-                'INVARIANT_VIOLATION',
-                `Received block for piece ${data.index} which is not in workingPieceMap`
-            ));
             this.schedule();
             return;
         }

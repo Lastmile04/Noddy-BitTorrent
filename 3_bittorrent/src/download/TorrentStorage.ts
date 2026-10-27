@@ -93,6 +93,7 @@ export class TorrentStorage extends EventEmitter {
                 }
                 bufferOffset += slice.bytesToProcess;
             }
+
         });
     }
 

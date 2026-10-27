@@ -26,7 +26,7 @@ export class DownloadManager extends EventEmitter {
     torrentMeta: TorrentMeta;
 
     private readonly MAX_ACTIVE_PEER: number = 80;
-    private ClinetState: ClientStateType = "UnInitialized";
+    private ClientState: ClientStateType = "UnInitialized";
 
     private initPromise: Promise<void> | null = null;
     private startPromise: Promise<void> | null = null;
@@ -62,12 +62,12 @@ export class DownloadManager extends EventEmitter {
     }
 
     public async init(): Promise<void> {
-        if (this.ClinetState === "Initialized" || this.ClinetState === "Started") return;
+        if (this.ClientState === "Initialized" || this.ClientState === "Started") return;
         if (this.initPromise) return this.initPromise;
 
         this.initPromise = (async () => {
             try {
-                this.ClinetState = "Initializing";
+                this.ClientState = "Initializing";
                 if (this.ROOT_DIR === null) {
                     const homeDir = os.homedir();
                     this.ROOT_DIR = path.join(homeDir, 'Downloads', 'NoddyBitTorrent');
@@ -96,9 +96,9 @@ export class DownloadManager extends EventEmitter {
 
                 this.torrentStorage = new TorrentStorage(storageData);
                 await this.torrentStorage.init();
-                this.ClinetState = "Initialized";
+                this.ClientState = "Initialized";
             } catch (err) {
-                this.ClinetState = "UnInitialized";
+                this.ClientState = "UnInitialized";
                 this.session.status = "failed";
                 this.initPromise = null;
                 this.emit('error', err);
@@ -110,14 +110,14 @@ export class DownloadManager extends EventEmitter {
     }
 
     public async start(): Promise<void> {
-        if (this.ClinetState === 'Started') return;
+        if (this.ClientState === 'Started') return;
         if (this.startPromise) return this.startPromise;
 
         this.startPromise = (async () => {
             try {
                 await this.init();
 
-                this.ClinetState = "Starting";
+                this.ClientState = "Starting";
 
                 // Construct Managers
                 const pieceData: PieceManagerConfig = {
@@ -159,14 +159,14 @@ export class DownloadManager extends EventEmitter {
                 // Attach Listeners ONCE here during construction phase to prevent duplicate bindings on retry
                 this.attachListeners();
 
-                this.ClinetState = 'Started';
+                this.ClientState = 'Started';
                 this.session.status = "downloading";
                 this.emit('sessionUpdate', this.session);
 
-                this.downloadPhase();
+                await this.downloadPhase();
             } catch (err) {
                 this.startPromise = null;
-                this.ClinetState = this.torrentStorage ? "Initialized" : "UnInitialized";
+                this.ClientState = this.torrentStorage ? "Initialized" : "UnInitialized";
 
                 this.session.status = "failed";
                 this.emit('sessionUpdate', this.session);
@@ -177,16 +177,33 @@ export class DownloadManager extends EventEmitter {
         return this.startPromise;
     }
 
-    private downloadPhase(): void {
-        this.pieceManager.init();
+    private async downloadPhase(): Promise<void> {
+        await this.pieceManager.init();
+        this.session.completedBytes = this.pieceManager.totalVerifiedBytes;
+        this.emit('sessionUpdate', this.session);
+
         for (const peer of this.peerList) {
             this.peerPoolManager.connectToPeer(peer.ip, peer.port);
         }
 
         this.pieceScheduler.start();
         this.chokingManager.start();
-
     }
+
+    private handlePeerReady = () => {
+        this.session.activePeers++;
+        this.emit('sessionUpdate', this.session);
+    };
+
+    private handlePeerDisconnected = () => {
+        this.session.activePeers = Math.max(0, this.session.activePeers - 1);
+        this.emit('sessionUpdate', this.session);
+    };
+
+    private handlePeerFailed = () => {
+        this.session.failedPeers++;
+        this.emit('sessionUpdate', this.session);
+    };
 
     private handlePeerError = ({ peer, error }: { peer: BitTorrentPeer, error: Error }) => {
         this.session.failedPeers++;
@@ -254,6 +271,9 @@ export class DownloadManager extends EventEmitter {
     private attachListeners(): void {
         if (this.peerPoolManager) {
             this.peerPoolManager.on('peer_error', this.handlePeerError);
+            this.peerPoolManager.on('peer_ready', this.handlePeerReady);
+            this.peerPoolManager.on('peer_disconnected', this.handlePeerDisconnected);
+            this.peerPoolManager.on('peer_failed', this.handlePeerFailed);
         }
 
         if (this.pieceManager) {
@@ -271,6 +291,9 @@ export class DownloadManager extends EventEmitter {
     private detachListeners(): void {
         if (this.peerPoolManager) {
             this.peerPoolManager.off('peer_error', this.handlePeerError);
+            this.peerPoolManager.off('peer_ready', this.handlePeerReady);
+            this.peerPoolManager.off('peer_disconnected', this.handlePeerDisconnected);
+            this.peerPoolManager.off('peer_failed', this.handlePeerFailed);
         }
 
         if (this.pieceManager) {
@@ -286,7 +309,6 @@ export class DownloadManager extends EventEmitter {
     }
 
     private haltDownload(): void {
-        // Stop active scheduling and choking loops to halt disk/network activity
         if (this.pieceScheduler) {
             this.pieceScheduler.stop();
         }
@@ -304,10 +326,10 @@ export class DownloadManager extends EventEmitter {
     }
 
     public async stop(): Promise<void> {
-        if (this.ClinetState !== 'Started') return;
+        if (this.ClientState !== 'Started') return;
         this.haltDownload();
-        this.ClinetState = 'Initialized'; // or 'UnInitialized' depending on design
-        this.session.status = 'idle'; // or 'stopped'
+        this.ClientState = 'Initialized';
+        this.session.status = 'idle';
         this.startPromise = null;
         this.emit('sessionUpdate', this.session);
     }

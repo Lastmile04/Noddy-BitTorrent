@@ -106,6 +106,7 @@ export class PeerPoolManager extends EventEmitter {
     /** Announces piece availability to all the inerested peers in the peer pool*/
     public announcePiece(idx: number): void {
         for (const peer of this.peers.values()) {
+            if (peer.lifecycleState !== "READY") continue;
             try {
                 peer.have(idx);
             } catch (err) {

@@ -5,7 +5,6 @@ export class PieceSelector {
     public readonly pieceToPeersMap: Map<number, Set<string>>;
 
     constructor(pieceCount: number) {
-        super();
         this.pieceCount = pieceCount;
         this.availabilityArray = new Uint16Array(pieceCount);
         this.pieceToPeersMap = new Map();

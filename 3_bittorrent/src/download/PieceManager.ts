@@ -1,4 +1,4 @@
-import { EventEmitter } from "node:stream";
+import { EventEmitter } from "node:events";
 import { PieceManagerConfig, ActivePiece } from "./types.js";
 import { ErrorFactory } from "../errors/TorrentError.js";
 import { computeSha1Hash } from "../identity/computeHash.js";
@@ -52,8 +52,8 @@ export class PieceManager extends EventEmitter {
         this.torrentStorage = torrentStorage;
     }
 
-    public init(): void {
-        this.initiateBitField();
+    public async init(): Promise<void> {
+        await this.initiateBitField();
     }
 
     // QUERIES
@@ -171,12 +171,13 @@ export class PieceManager extends EventEmitter {
             if (!this.pieceHashes[idx].equals(bufHash)) {
                 this.missingPieces.add(idx);
                 this.emit('piece_verification_failed', idx);
-                return; // Exit early
+                return;
             }
 
             // Hash passed, now attempting persistence
             this.pendingWrite.add(idx);
             this.emit('piece_hash_verified', idx);
+
 
             await this.torrentStorage.writeInto(idx, buf);
 

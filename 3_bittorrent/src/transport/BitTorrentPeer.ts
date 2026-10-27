@@ -608,6 +608,7 @@ export class BitTorrentPeer extends EventEmitter {
                     begin: msgObj.begin,
                     block: msgObj.block,
                 });
+
                 this.lastPeerActive = Date.now();
                 this.downloadTracker.addBytes(msgObj.block.length);
                 break;
@@ -659,6 +660,7 @@ export class BitTorrentPeer extends EventEmitter {
                     begin: msgObj.begin,
                     length: msgObj.length,
                 });
+
                 this.lastPeerActive = Date.now();
                 break;
             }
@@ -788,6 +790,7 @@ export class BitTorrentPeer extends EventEmitter {
 
         try {
             this.socket.write(msgBuf);
+
         } catch (err) {
             const socketErr = ErrorFactory.fromSocketError(err);
             this.fail(socketErr);
@@ -902,6 +905,7 @@ export class BitTorrentPeer extends EventEmitter {
 
         try {
             this.sendPacket(6, payload);
+
         } catch (err: any) {
             this.outstandingRequests.delete(key);
             throw err;
@@ -952,6 +956,7 @@ export class BitTorrentPeer extends EventEmitter {
             throw err;
         }
         this.uploadTracker.addBytes(blockLength);
+
     }
 
     public destroy(err?: Error): void {
