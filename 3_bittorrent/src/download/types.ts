@@ -122,7 +122,7 @@ export interface ReceivedBlock {
 
 export interface PeerHandlers {
     block(data: ReceivedBlock): void;
-    peerReady(): void;
+    peerReady(data: { key: string }): void;
     peerUnchoked(): void;
     peerHave(data: { key: string; index: number }): void;
     peerBitfield(data: { key: string; bitfield: Buffer }): void;

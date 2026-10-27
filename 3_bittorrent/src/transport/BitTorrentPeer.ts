@@ -239,6 +239,7 @@ export class BitTorrentPeer extends EventEmitter {
                     this.fail(ErrorFactory.normalize(err));
                     return;
                 }
+                this.socket.setNoDelay(true);
             } else {
                 if (this.bufferedBytes < 4) break;
 

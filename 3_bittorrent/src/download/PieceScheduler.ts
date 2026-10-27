@@ -453,24 +453,34 @@ export class PieceScheduler extends EventEmitter {
 
         this.boundPeerHandlers = {
             block: (data) => this.handleBlockReceived(data),
-            peerReady: () => this.schedule(),
-            peerUnchoked: () => this.schedule(),
 
+            peerReady: ({ key }) => {
+                const clientBitfield = this.pieceManager.clientBitfield;
+
+                if (clientBitfield && clientBitfield.length > 0) {
+                    try {
+                        this.peerPoolManager.sendBitfield(key, clientBitfield);
+                    } catch (err) {
+                        // Suppress or handle transient send errors gracefully
+                    }
+                }
+
+                this.schedule();
+            },
+
+            peerUnchoked: () => this.schedule(),
             peerHave: (data) => {
                 this.pieceSelector.updatePieceToPeersMap(data.key, data.index);
                 this.schedule();
             },
-
             peerBitfield: (data) => {
                 this.pieceSelector.updatePieceToPeersMap(data.key, data.bitfield);
                 this.schedule();
             },
-
             peerChoked: ({ key }) => {
                 this.evictInflightForPeer(key);
                 this.schedule();
             },
-
             peerDisconnected: handlePeerRemoval,
             peerFailed: handlePeerRemoval,
         };

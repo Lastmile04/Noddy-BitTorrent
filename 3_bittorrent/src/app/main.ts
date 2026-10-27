@@ -71,12 +71,11 @@ async function run() {
     console.log('🌐 Contacting tracker...');
     const result = await urlDispatcher(torrentMeta.announceList, trackerParams);
 
-    // Filter out IPv6 peers to prevent hanging on unreachable routes
-    const ipv4Peers = result.peers.filter((p: { ip: string }) => !p.ip.includes(':'));
-    console.log(`👥 Peers discovered: ${result.peers.length} total (${ipv4Peers.length} IPv4 usable)`);
+    const peers = result.peers;
+    console.log(`👥 Peers discovered: ${result.peers.length} `);
     console.log(`⏱ Announce interval: ${result.peerStats.interval}\n`);
 
-    const download = new DownloadManager({ peerList: ipv4Peers, peerId, torrentMeta });
+    const download = new DownloadManager({ peerList: peers, peerId, torrentMeta });
 
     let lastCompletedBytes = 0;
     let lastTickTime = Date.now();
@@ -121,7 +120,7 @@ async function run() {
         console.log('\n\n\x1b[32m✅ Download completed and verified successfully!\x1b[0m');
         printSummary({
             name: torrentMeta.name.toString(),
-            contacted: ipv4Peers.length,
+            contacted: peers.length,
             success: session.activePeers || 1,
             failed: session.failedPeers,
             verified: true,

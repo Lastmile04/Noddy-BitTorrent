@@ -120,6 +120,12 @@ export class PeerPoolManager extends EventEmitter {
         }
     }
 
+    public sendBitfield(key: string, bitfiled: Buffer) {
+        const peer = this.peers.get(key);
+        if (!peer || peer.lifecycleState !== 'READY') return;
+        peer.bitfield(bitfiled);
+    }
+
     public unchokePeer(key: string): void {
         const peer = this.peers.get(key);
         if (!peer || peer.lifecycleState !== 'READY') return;

@@ -8,7 +8,7 @@ import * as fs from 'fs/promises';
 
 import { DownloadManagerConfig, PieceManagerConfig, DownloadSession, TorrentStorageConfig, ClientStateType, PeerPoolConfig, PieceSchedulerConfig } from './types.js';
 import { Peer } from '../peers/types.js';
-import { TorrentMeta } from "../app/types.js";
+import { TorrentMeta, TrackerParams } from "../app/types.js";
 
 import { TorrentStorage } from "./TorrentStorage.js";
 import { ErrorFactory } from "../errors/TorrentError.js";
@@ -17,6 +17,7 @@ import { PieceScheduler } from "./PieceScheduler.js";
 import { PieceManager } from './PieceManager.js';
 import { ChokingManager } from "./ChokingManager.js";
 import { BitTorrentPeer } from "../transport/BitTorrentPeer.js";
+import { urlDispatcher } from "../tracker/urlDispatcher.js";
 
 export class DownloadManager extends EventEmitter {
 
@@ -30,6 +31,7 @@ export class DownloadManager extends EventEmitter {
 
     private initPromise: Promise<void> | null = null;
     private startPromise: Promise<void> | null = null;
+    private trackerIntervalTimer: NodeJS.Timeout | null = null;
 
     private ROOT_DIR: string | null = null;
 
@@ -188,6 +190,59 @@ export class DownloadManager extends EventEmitter {
 
         this.pieceScheduler.start();
         this.chokingManager.start();
+        this.startTrackerAnnounceLoop();
+    }
+
+    private startTrackerAnnounceLoop(): void {
+        if (this.trackerIntervalTimer) return;
+
+        // Default fallback interval (15 minutes) if none is provided yet
+        let intervalMs = 900 * 1000;
+
+        const pollTracker = async () => {
+            if (this.ClientState !== 'Started') return;
+
+            try {
+                const trackerParams: TrackerParams = {
+                    infoHash: this.torrentMeta.infoHash,
+                    peerId: this.peerId,
+                    port: 4000,
+                    uploaded: 0,
+                    downloaded: this.session.completedBytes,
+                    left: this.torrentMeta.totalLength - this.session.completedBytes,
+                    numwant: 50,
+                    event: 'interval',
+                };
+
+                const freshResult = await urlDispatcher(this.torrentMeta.announceList, trackerParams);
+
+                // Dynamically adjust the interval timer based on what the tracker explicitly requested
+                if (freshResult.peerStats && freshResult.peerStats.interval) {
+                    const newIntervalMs = freshResult.peerStats.interval * 1000;
+                    if (newIntervalMs !== intervalMs) {
+                        intervalMs = newIntervalMs;
+                        if (this.trackerIntervalTimer) {
+                            clearInterval(this.trackerIntervalTimer);
+                            this.trackerIntervalTimer = setInterval(pollTracker, intervalMs);
+                        }
+                    }
+                }
+
+                const newIpv4Peers: Peer[] = freshResult.peers;
+                this.addPeers(newIpv4Peers);
+            } catch {
+                // Suppress transient tracker network blips silently
+            }
+        };
+
+        this.trackerIntervalTimer = setInterval(pollTracker, intervalMs);
+    }
+
+    private stopTrackerAnnounceLoop(): void {
+        if (this.trackerIntervalTimer) {
+            clearInterval(this.trackerIntervalTimer);
+            this.trackerIntervalTimer = null;
+        }
     }
 
     private handlePeerReady = () => {
@@ -309,6 +364,7 @@ export class DownloadManager extends EventEmitter {
     }
 
     private haltDownload(): void {
+        this.stopTrackerAnnounceLoop();
         if (this.pieceScheduler) {
             this.pieceScheduler.stop();
         }
@@ -323,6 +379,12 @@ export class DownloadManager extends EventEmitter {
         }
 
         this.detachListeners();
+    }
+
+    public addPeers(newPeers: Peer[]): void {
+        for (const peer of newPeers) {
+            this.peerPoolManager.connectToPeer(peer.ip, peer.port);
+        }
     }
 
     public async stop(): Promise<void> {

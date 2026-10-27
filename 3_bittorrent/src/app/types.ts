@@ -19,7 +19,7 @@ export interface TrackerParams {
     downloaded: number;
     left: number;
     numwant: number;
-    event: 'started' | 'stopped' | 'completed';
+    event: 'started' | 'stopped' | 'completed' | 'interval';
 }
 
 export interface TorrentFileSpec {
