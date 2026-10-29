@@ -35,6 +35,8 @@ export class BitTorrentPeer extends EventEmitter {
     lastPeerActive?: number;
     handledFailure: boolean;
 
+    private isInbound: boolean;
+
     lifecycleState: LifecycleStateOpts;
     connectResolve?: () => void;
 
@@ -53,7 +55,8 @@ export class BitTorrentPeer extends EventEmitter {
         infoHash,
         pieceLength,
         totalLength,
-        pieceCount
+        pieceCount,
+        isInbound = false
     }: PeerConfig) {
 
         super();
@@ -81,6 +84,8 @@ export class BitTorrentPeer extends EventEmitter {
         this.pieceCount = pieceCount;
         this.MAX_FRAME_SIZE = 1048576;
         this.outstandingRequests = new Map();
+
+        this.isInbound = isInbound;
 
         this.remotePeerState = {
             ip: peer.ip,
@@ -176,6 +181,9 @@ export class BitTorrentPeer extends EventEmitter {
 
     private sendHandshake(): void {
         const reserved = Buffer.alloc(8);
+        // Set the Extension Protocol bit (BEP 10) at byte index 5
+        reserved[5] = 0x10;
+
         const pstrLenBuf = Buffer.from([BT_PROTOCOL_LEN]);
 
         try {
@@ -223,6 +231,9 @@ export class BitTorrentPeer extends EventEmitter {
                 try {
                     const fullBuf = this.consumeBytes(handshakeLen);
                     const parsed = this.parseHandshake(fullBuf);
+
+                    if (this.isInbound) this.sendHandshake();
+
                     this.handshakeComplete = true;
                     this.lifecycleState = 'READY';
 
@@ -235,7 +246,8 @@ export class BitTorrentPeer extends EventEmitter {
                         this.connectReject = undefined;
                     }
 
-                } catch (err) {
+                } catch (err: any) {
+                    console.error(`❌ [PARSE HANDSHAKE ERROR]:`, err.message, err.details || '');
                     this.fail(ErrorFactory.normalize(err));
                     return;
                 }
@@ -276,6 +288,7 @@ export class BitTorrentPeer extends EventEmitter {
     }
 
     private onClose(): void {
+
         if (!this.handshakeComplete && !this.handledFailure) {
             this.fail(
                 ErrorFactory.socket(
@@ -294,6 +307,7 @@ export class BitTorrentPeer extends EventEmitter {
     }
 
     private onError(err: Error): void {
+        console.error(`❌ [SOCKET ERROR DEBUG] Peer ${this.remotePeerState.ip}:${this.remotePeerState.port} ->`, err.message);
         this.fail(ErrorFactory.fromSocketError(err));
     }
 
@@ -474,6 +488,14 @@ export class BitTorrentPeer extends EventEmitter {
                     length: payload.readUInt32BE(8)
                 };
 
+            case 20: // BEP 10 Extended Protocol Support
+                if (payload.length < 1) throw ErrorFactory.network('PROTOCOL_VIOLATION', "Extended message payload too short");
+                return {
+                    type: "EXTENDED",
+                    extendedId: payload[0],
+                    payload: payload.subarray(1)
+                } as unknown as PeerMessage;
+
             default:
                 throw ErrorFactory.network(
                     'PROTOCOL_VIOLATION',
@@ -632,12 +654,7 @@ export class BitTorrentPeer extends EventEmitter {
                     ));
                 }
 
-                if (this.remotePeerState.amChoking) {
-                    return this.fail(ErrorFactory.network(
-                        'PROTOCOL_VIOLATION',
-                        "Cannot accept REQUEST while we are choking the peer"
-                    ));
-                }
+                if (this.remotePeerState.amChoking) return;
 
                 const isLastPiece = msgObj.index === this.pieceCount - 1;
                 const expectedPieceSize = isLastPiece
@@ -705,6 +722,11 @@ export class BitTorrentPeer extends EventEmitter {
                     begin: msgObj.begin,
                     length: msgObj.length,
                 });
+                this.lastPeerActive = Date.now();
+                break;
+            }
+
+            case "EXTENDED": {
                 this.lastPeerActive = Date.now();
                 break;
             }
@@ -957,7 +979,6 @@ export class BitTorrentPeer extends EventEmitter {
             throw err;
         }
         this.uploadTracker.addBytes(blockLength);
-
     }
 
     public destroy(err?: Error): void {

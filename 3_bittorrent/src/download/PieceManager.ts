@@ -88,10 +88,17 @@ export class PieceManager extends EventEmitter {
 
         if (!this.activePieces.has(pieceIdx)) {
             this.missingPieces.delete(pieceIdx);
+
+            const initialMissing = new Set<number>();
+            for (let offset = 0; offset < pieceSize; offset += BLOCK_SIZE) {
+                initialMissing.add(offset);
+            }
+
             this.activePieces.set(pieceIdx, {
                 buffer: Buffer.alloc(pieceSize),
                 downloadedBytes: 0,
-                receivedBlocks: new Set()
+                receivedBlocks: new Set(),
+                missingOffsets: initialMissing
             });
         }
 
@@ -101,6 +108,7 @@ export class PieceManager extends EventEmitter {
 
         block.copy(active.buffer, begin);
         active.receivedBlocks.add(begin);
+        active.missingOffsets.delete(begin);
         active.downloadedBytes += block.length;
 
         if (active.downloadedBytes === pieceSize) {
@@ -126,21 +134,24 @@ export class PieceManager extends EventEmitter {
     }
 
     public getMissingOffsets(pieceIdx: number): number[] {
-
         if (pieceIdx < 0 || pieceIdx >= this.pieceCount) {
             throw ErrorFactory.piece_state('INVALID_PIECE_INDEX', "pieceIndex is out of bounds", { pieceIdx });
         }
 
         if (this.hasPiece(pieceIdx)) return [];
 
-        const pieceSize = pieceIdx === this.pieceCount - 1 ? this.lastPieceLength : this.pieceLength;
         const active = this.activePieces.get(pieceIdx);
-        const missingOffset: number[] = [];
-
-        for (let offset = 0; offset < pieceSize; offset += BLOCK_SIZE) {
-            if (!active || !active.receivedBlocks.has(offset)) missingOffset.push(offset);
+        if (!active) {
+            // If the piece isn't in the active working set yet, return all offsets for it
+            const pieceSize = pieceIdx === this.pieceCount - 1 ? this.lastPieceLength : this.pieceLength;
+            const allOffsets: number[] = [];
+            for (let offset = 0; offset < pieceSize; offset += BLOCK_SIZE) {
+                allOffsets.push(offset);
+            }
+            return allOffsets;
         }
-        return missingOffset;
+
+        return Array.from(active.missingOffsets);
     }
 
 

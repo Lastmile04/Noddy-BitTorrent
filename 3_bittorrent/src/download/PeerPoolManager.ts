@@ -1,7 +1,7 @@
 import EventEmitter from "node:events";
 import * as net from 'net';
 import { BitTorrentPeer } from "../transport/BitTorrentPeer.js";
-import { PeerBlockPayload, PeerPoolConfig, PoolListeners } from "./types.js";
+import { PeerBlockPayload, BlockRequest, PeerPoolConfig, PoolListeners } from "./types.js";
 import { ErrorFactory } from "../errors/TorrentError.js";
 
 
@@ -20,6 +20,9 @@ export class PeerPoolManager extends EventEmitter {
     }
 
     public connectToPeer(ip: string, port: number): void {
+        // --- GUARD: Prevent self-dialing our own client instance on port 4000 ---
+        //if ((ip === '127.0.0.1' || ip === 'localhost') && port === 4000) return;
+
         const key = `${ip}:${port}`;
 
         if (this.peers.has(key) || this.peers.size >= this.maxPeers) return;
@@ -41,6 +44,32 @@ export class PeerPoolManager extends EventEmitter {
             // Connection failures invoke peer.fail() internally, emitting an 'error' event.
             // Pool handles cleanup via its 'error' listener. Catching here prevents unhandled rejections.
         });
+    }
+
+    public registerInboundPeer(socket: net.Socket, ip: string, port: number): void {
+
+        const key = `${ip}:${port}`;
+
+        if (this.peers.has(key) || this.peers.size >= this.maxPeers) {
+            socket.destroy();
+            return;
+        }
+
+        const peer = new BitTorrentPeer({
+            socket,
+            peer: { ip, port },
+            peerId: this.config.peerId,
+            infoHash: this.config.infoHash,
+            pieceLength: this.config.pieceLength,
+            totalLength: this.config.totalLength,
+            pieceCount: this.config.pieceCount,
+            isInbound: true,
+        });
+
+        peer.lifecycleState = "CONNECTED";
+        this.peers.set(key, peer);
+        this.attachPeerListeners(key, peer);
+        peer.attachTransportHandlers();
     }
 
     public getInterested(): BitTorrentPeer[] {
@@ -227,6 +256,9 @@ export class PeerPoolManager extends EventEmitter {
             block: (data: PeerBlockPayload) => {
                 this.emit('block', { peerKey: key, index: data.index, begin: data.begin, block: data.block });
             },
+            request: (data: BlockRequest) => {
+                this.emit('peer_request', { key, ...data });
+            },
             error: (err?: Error) => this.unregisterPeer(key, err),
             closed: () => this.unregisterPeer(key),
             ready: () => this.emit('peer_ready', { key }),
@@ -241,6 +273,7 @@ export class PeerPoolManager extends EventEmitter {
         };
 
         peer.on('block', listeners.block);
+        peer.on('request', listeners.request);
         peer.on('error', listeners.error);
         peer.on('SOCKET_CLOSED', listeners.closed);
         peer.on('HANDSHAKE_SUCCESS', listeners.ready);

@@ -1,5 +1,6 @@
 import * as net from 'net';
 import { Peer } from '../peers/types.js';
+import { PeerPoolManager } from '../download/PeerPoolManager.js';
 
 export interface PeerConfig {
     socket: net.Socket
@@ -9,6 +10,12 @@ export interface PeerConfig {
     pieceLength: number
     totalLength: number
     pieceCount: number
+    isInbound?: boolean
+}
+
+export interface PeerServerConfig {
+    port: number
+    peerPoolManager: PeerPoolManager
 }
 
 export interface PeerState {

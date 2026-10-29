@@ -41,6 +41,7 @@ export interface ActivePiece {
     buffer: Buffer
     downloadedBytes: number
     receivedBlocks: Set<number> // set of begin offsets
+    missingOffsets: Set<number>
 }
 
 export interface PieceManagerConfig {
@@ -74,6 +75,7 @@ export interface PeerBlockPayload {
 
 export interface PoolListeners {
     block: (data: PeerBlockPayload) => void,
+    request: (data: BlockRequest) => void,
     error: (err?: Error) => void,
     closed: () => void
     ready: () => void
@@ -95,6 +97,13 @@ export interface PieceSchedulerConfig {
 }
 
 export interface BlockRequest {
+    index: number
+    begin: number
+    length: number
+}
+
+export interface ReceivedRequest {
+    key: string,
     index: number
     begin: number
     length: number
@@ -132,9 +141,8 @@ export interface PeerHandlers {
 }
 
 export interface PieceHandler {
-    verified: (pieceIdx: number) => void;
+    persisted: (pieceIdx: number) => void;
     failed: (pieceIdx: number) => void;
-    complete: () => void;
 }
 
 // TORRENT_STORAGE

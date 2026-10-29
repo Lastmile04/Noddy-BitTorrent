@@ -49,7 +49,7 @@ function printSummary(stats: {
 }
 
 async function run() {
-    const torrentPath: string = path.resolve(__dirname, '../../samples/debian.torrent');
+    const torrentPath: string = path.resolve('/home/dee/Desktop/b_day.mp4.torrent');
     const torrentMeta = parseTorrentFile(torrentPath);
 
     printBanner(torrentMeta.name.toString());
@@ -64,15 +64,17 @@ async function run() {
         uploaded: 0,
         downloaded: 0,
         left: totalLength,
-        numwant: 50,
+        numwant: 200,
         event: 'started',
     };
 
     console.log('🌐 Contacting tracker...');
     const result = await urlDispatcher(torrentMeta.announceList, trackerParams);
 
-    const peers = result.peers;
-    console.log(`👥 Peers discovered: ${result.peers.length} `);
+    // --- Filter out self (127.0.0.1:4000) directly from the raw peers list ---
+    const peers = result.peers // .peers.filter((p: any) => !(p.ip === '127.0.0.1' && p.port === 4000));
+
+    console.log(`👥 Peers discovered: ${peers.length} `);
     console.log(`⏱ Announce interval: ${result.peerStats.interval}\n`);
 
     const download = new DownloadManager({ peerList: peers, peerId, torrentMeta });
@@ -127,7 +129,6 @@ async function run() {
             downloaded: session.completedBytes,
             elapsedSeconds,
         });
-        process.exit(0);
     });
 
     download.on('error', (err: Error) => {

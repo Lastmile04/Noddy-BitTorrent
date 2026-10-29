@@ -66,11 +66,9 @@ export async function udpPeer({ tracker, torrent, session }) {
 
         } catch (error) {
             if (error instanceof RetryExhaustedError) {
-                console.log('address attempt failed, trying next address');
                 continue;
             }
             if (error instanceof TrackerResponseError) {
-                console.error('tracker explicitly rejected request');
                 throw error;
             }
 

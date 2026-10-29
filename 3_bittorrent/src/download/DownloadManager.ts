@@ -6,7 +6,17 @@ import path from 'path';
 import { statfs } from "node:fs/promises";
 import * as fs from 'fs/promises';
 
-import { DownloadManagerConfig, PieceManagerConfig, DownloadSession, TorrentStorageConfig, ClientStateType, PeerPoolConfig, PieceSchedulerConfig } from './types.js';
+import {
+    DownloadManagerConfig,
+    PieceManagerConfig,
+    DownloadSession,
+    TorrentStorageConfig,
+    ClientStateType,
+    PeerPoolConfig,
+    PieceSchedulerConfig,
+    ReceivedRequest
+} from './types.js';
+
 import { Peer } from '../peers/types.js';
 import { TorrentMeta, TrackerParams } from "../app/types.js";
 
@@ -18,6 +28,8 @@ import { PieceManager } from './PieceManager.js';
 import { ChokingManager } from "./ChokingManager.js";
 import { BitTorrentPeer } from "../transport/BitTorrentPeer.js";
 import { urlDispatcher } from "../tracker/urlDispatcher.js";
+import { PeerServer } from "../transport/PeerServer.js";
+import { PeerServerConfig } from "../transport/types.js";
 
 export class DownloadManager extends EventEmitter {
 
@@ -33,6 +45,8 @@ export class DownloadManager extends EventEmitter {
     private startPromise: Promise<void> | null = null;
     private trackerIntervalTimer: NodeJS.Timeout | null = null;
 
+    private trackerTimeout: NodeJS.Timeout | null = null;
+    private currentIntervalMs: number = 900 * 1000; // Default 15 mins
     private ROOT_DIR: string | null = null;
 
     public torrentStorage!: TorrentStorage;
@@ -40,6 +54,7 @@ export class DownloadManager extends EventEmitter {
     public pieceScheduler!: PieceScheduler;
     public pieceManager!: PieceManager;
     public chokingManager!: ChokingManager;
+    public peerServer!: PeerServer;
 
     constructor({ peerList, peerId, torrentMeta }: DownloadManagerConfig) {
         super();
@@ -158,6 +173,12 @@ export class DownloadManager extends EventEmitter {
 
                 this.chokingManager = new ChokingManager(this.peerPoolManager);
 
+                const peerServerConfig: PeerServerConfig = {
+                    port: 4000,
+                    peerPoolManager: this.peerPoolManager
+                };
+                this.peerServer = new PeerServer(peerServerConfig);
+
                 // Attach Listeners ONCE here during construction phase to prevent duplicate bindings on retry
                 this.attachListeners();
 
@@ -184,8 +205,14 @@ export class DownloadManager extends EventEmitter {
         this.session.completedBytes = this.pieceManager.totalVerifiedBytes;
         this.emit('sessionUpdate', this.session);
 
+        // --- START INBOUND PEER SERVER ---
+        this.peerServer.start();
+
         for (const peer of this.peerList) {
-            this.peerPoolManager.connectToPeer(peer.ip, peer.port);
+            // if ((peer.ip === '127.0.0.1' || peer.ip === 'localhost') && peer.port === 4000) continue;
+            setTimeout(() => {
+                this.peerPoolManager.connectToPeer(peer.ip, peer.port);
+            }, 3000); // Wait 3 seconds before attempting to reconnect
         }
 
         this.pieceScheduler.start();
@@ -194,48 +221,65 @@ export class DownloadManager extends EventEmitter {
     }
 
     private startTrackerAnnounceLoop(): void {
-        if (this.trackerIntervalTimer) return;
+        if (this.trackerIntervalTimer || this.trackerTimeout) return;
+        this.pollTracker();
+    }
 
-        // Default fallback interval (15 minutes) if none is provided yet
-        let intervalMs = 900 * 1000;
+    private async pollTracker(): Promise<void> {
+        if (this.ClientState !== 'Started') return;
 
-        const pollTracker = async () => {
-            if (this.ClientState !== 'Started') return;
+        try {
+            const trackerParams: TrackerParams = {
+                infoHash: this.torrentMeta.infoHash,
+                peerId: this.peerId,
+                port: 4000,
+                uploaded: 0,
+                downloaded: this.session.completedBytes,
+                left: this.torrentMeta.totalLength - this.session.completedBytes,
+                numwant: 200,
+                event: '',
+            };
 
-            try {
-                const trackerParams: TrackerParams = {
-                    infoHash: this.torrentMeta.infoHash,
-                    peerId: this.peerId,
-                    port: 4000,
-                    uploaded: 0,
-                    downloaded: this.session.completedBytes,
-                    left: this.torrentMeta.totalLength - this.session.completedBytes,
-                    numwant: 50,
-                    event: 'interval',
-                };
+            const freshResult = await urlDispatcher(this.torrentMeta.announceList, trackerParams);
 
-                const freshResult = await urlDispatcher(this.torrentMeta.announceList, trackerParams);
-
-                // Dynamically adjust the interval timer based on what the tracker explicitly requested
-                if (freshResult.peerStats && freshResult.peerStats.interval) {
-                    const newIntervalMs = freshResult.peerStats.interval * 1000;
-                    if (newIntervalMs !== intervalMs) {
-                        intervalMs = newIntervalMs;
-                        if (this.trackerIntervalTimer) {
-                            clearInterval(this.trackerIntervalTimer);
-                            this.trackerIntervalTimer = setInterval(pollTracker, intervalMs);
-                        }
-                    }
-                }
-
-                const newIpv4Peers: Peer[] = freshResult.peers;
-                this.addPeers(newIpv4Peers);
-            } catch {
-                // Suppress transient tracker network blips silently
+            if (freshResult.peerStats && freshResult.peerStats.interval) {
+                this.currentIntervalMs = freshResult.peerStats.interval * 1000;
             }
-        };
 
-        this.trackerIntervalTimer = setInterval(pollTracker, intervalMs);
+            if (freshResult.peers && freshResult.peers.length > 0) {
+                this.addPeers(freshResult.peers);
+            }
+
+            this.scheduleNextPoll(this.currentIntervalMs);
+        } catch (err) {
+            console.warn(`[DownloadManager] Tracker poll failed, retrying in 30s...`, err);
+            this.scheduleNextPoll(30 * 1000);
+        }
+    }
+
+    private scheduleNextPoll(delayMs: number): void {
+        if (this.trackerTimeout) {
+            clearTimeout(this.trackerTimeout);
+            this.trackerTimeout = null;
+        }
+
+        if (this.ClientState === 'Started') {
+            this.trackerTimeout = setTimeout(() => {
+                this.trackerTimeout = null;
+                this.pollTracker();
+            }, delayMs);
+        }
+    }
+
+    public forceTrackerPoll(): void {
+        if (this.ClientState !== 'Started') return;
+
+        if (this.trackerTimeout) {
+            clearTimeout(this.trackerTimeout);
+            this.trackerTimeout = null;
+        }
+
+        this.pollTracker();
     }
 
     private stopTrackerAnnounceLoop(): void {
@@ -243,11 +287,44 @@ export class DownloadManager extends EventEmitter {
             clearInterval(this.trackerIntervalTimer);
             this.trackerIntervalTimer = null;
         }
+        if (this.trackerTimeout) {
+            clearTimeout(this.trackerTimeout);
+            this.trackerTimeout = null;
+        }
     }
 
-    private handlePeerReady = () => {
+    private handlePeerRequest = async ({ key, index, begin, length }: ReceivedRequest) => {
+        if (!this.pieceManager || !this.pieceManager.hasPiece(index)) return;
+
+        try {
+            const allocatedBuf = Buffer.alloc(length);
+            const blockBuf = await this.torrentStorage.readFrom(index, length, allocatedBuf, begin);
+
+            const peer = this.peerPoolManager.getAllPeers().get(key);
+
+            if (peer && peer.lifecycleState === 'READY' && !peer.remotePeerState.amChoking) {
+                peer.piece(index, begin, blockBuf);
+            }
+        } catch (err) {
+            console.warn(`[DownloadManager] Failed to serve block to peer ${key}:`, err);
+        }
+    }
+
+    private handlePeerReady = ({ key }: { key: string }) => {
         this.session.activePeers++;
         this.emit('sessionUpdate', this.session);
+
+        const clientBitfield = this.pieceManager?.clientBitfield;
+
+        if (clientBitfield && clientBitfield.length > 0) {
+            try {
+                this.peerPoolManager.sendBitfield(key, clientBitfield);
+            } catch (err) {
+                console.error(`[Bitfield Error] Failed to send bitfield to ${key}:`, err);
+            }
+        } else {
+            console.warn(`[Bitfield Warning] clientBitfield is undefined or empty for peer ${key}!`);
+        }
     };
 
     private handlePeerDisconnected = () => {
@@ -258,6 +335,10 @@ export class DownloadManager extends EventEmitter {
     private handlePeerFailed = () => {
         this.session.failedPeers++;
         this.emit('sessionUpdate', this.session);
+
+        if (this.session.activePeers === 0) {
+            this.forceTrackerPoll();
+        }
     };
 
     private handlePeerError = ({ peer, error }: { peer: BitTorrentPeer, error: Error }) => {
@@ -313,8 +394,6 @@ export class DownloadManager extends EventEmitter {
         this.session.status = 'seeding';
         this.session.completedBytes = this.session.totalLength;
 
-        console.log(`[DownloadManager] Download complete! Transitioning to Seeding mode for: ${this.session.torrentName}`);
-
         if (this.pieceScheduler) {
             this.pieceScheduler.stop();
         }
@@ -329,6 +408,7 @@ export class DownloadManager extends EventEmitter {
             this.peerPoolManager.on('peer_ready', this.handlePeerReady);
             this.peerPoolManager.on('peer_disconnected', this.handlePeerDisconnected);
             this.peerPoolManager.on('peer_failed', this.handlePeerFailed);
+            this.peerPoolManager.on('peer_request', this.handlePeerRequest);
         }
 
         if (this.pieceManager) {
@@ -339,7 +419,7 @@ export class DownloadManager extends EventEmitter {
 
         if (this.pieceScheduler) {
             this.pieceScheduler.on('error', this.handleSchedulerError);
-            this.pieceScheduler.on('complete', this.handleSchedulerComplete);
+            this.pieceScheduler.on('scheduler_complete', this.handleSchedulerComplete);
         }
     }
 
@@ -359,12 +439,15 @@ export class DownloadManager extends EventEmitter {
 
         if (this.pieceScheduler) {
             this.pieceScheduler.off('error', this.handleSchedulerError);
-            this.pieceScheduler.off('complete', this.handleSchedulerComplete);
+            this.pieceScheduler.off('scheduler_complete', this.handleSchedulerComplete);
         }
     }
 
     private haltDownload(): void {
         this.stopTrackerAnnounceLoop();
+        if (this.peerServer) {
+            this.peerServer.stop();
+        }
         if (this.pieceScheduler) {
             this.pieceScheduler.stop();
         }
