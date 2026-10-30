@@ -49,7 +49,7 @@ function printSummary(stats: {
 }
 
 async function run() {
-    const torrentPath: string = path.resolve('/home/dee/Desktop/b_day.mp4.torrent');
+    const torrentPath: string = path.resolve(__dirname, '../../samples/debian.torrent');
     const torrentMeta = parseTorrentFile(torrentPath);
 
     printBanner(torrentMeta.name.toString());
@@ -72,7 +72,7 @@ async function run() {
     const result = await urlDispatcher(torrentMeta.announceList, trackerParams);
 
     // --- Filter out self (127.0.0.1:4000) directly from the raw peers list ---
-    const peers = result.peers // .peers.filter((p: any) => !(p.ip === '127.0.0.1' && p.port === 4000));
+    const peers = result.peers.filter((p: any) => !(p.ip === '127.0.0.1' && p.port === 4000));
 
     console.log(`👥 Peers discovered: ${peers.length} `);
     console.log(`⏱ Announce interval: ${result.peerStats.interval}\n`);
@@ -104,8 +104,19 @@ async function run() {
         lastActivePeers = download.session.activePeers ?? 0;
         lastFailedPeers = download.session.failedPeers;
 
+        // --- PROGRESS BAR RENDERER ---
+        const barLength = 20;
+        const numPercent = totalLength > 0 ? (download.session.completedBytes / totalLength) : 0;
+        const filledLength = Math.round(barLength * numPercent);
+        const bar = '█'.repeat(Math.max(0, filledLength)) + '░'.repeat(Math.max(0, barLength - filledLength));
+
+        // Original line commented out
+        // process.stdout.write(
+        //     `\r\x1b[K📥 Progress: ${percent}% | Down: ${downloadedMB} / ${totalMB} MB | Speed: ${currentSpeedMBs.toFixed(2)} MB/s | Active Peers: ${lastActivePeers} | Failed: ${lastFailedPeers}`
+        // );
+
         process.stdout.write(
-            `\r\x1b[K📥 Progress: ${percent}% | Down: ${downloadedMB} / ${totalMB} MB | Speed: ${currentSpeedMBs.toFixed(2)} MB/s | Active Peers: ${lastActivePeers} | Failed: ${lastFailedPeers}`
+            `\r\x1b[K📥 [${bar}] ${percent}% | Down: ${downloadedMB} / ${totalMB} MB | Speed: ${currentSpeedMBs.toFixed(2)} MB/s | Active Peers: ${lastActivePeers} | Failed: ${lastFailedPeers}`
         );
     }, 1000);
 

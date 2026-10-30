@@ -67,7 +67,6 @@ export class ChokingManager {
                 return b.getUploadRate() - a.getUploadRate();
             }
         });
-        console.log(`[CHOKING/UNCHOKING]-->[FILTERED_SORTED_COUNT: ${sortedPeers.length}]`);
 
         // Reserve 1 slot for optimistic peer if active, leaving 3 for regular slots
         const regularSlotCount = this.optimisticPeer ? this.maxUnchoked - 1 : this.maxUnchoked;
