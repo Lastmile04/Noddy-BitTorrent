@@ -62,7 +62,8 @@ async function askUser(query: string): Promise<string> {
 }
 
 async function run() {
-    // Correct path to root-level samples folder from src/app/
+    // --- PATH CONFIGURATION ---
+    // const defaultTorrentPath = path.resolve(__dirname, '../samples/debian.torrent');
     const defaultTorrentPath = path.resolve(__dirname, '../../samples/debian.torrent');
     const defaultDownloadDir = path.resolve(process.cwd(), 'downloads');
 
@@ -137,6 +138,7 @@ async function run() {
     const result = await urlDispatcher(torrentMeta.announceList, trackerParams);
 
     // --- Filter out self (127.0.0.1:4000) directly from the raw peers list ---
+    // const peers = result.peers;
     peers = result.peers.filter((p: any) => !(p.ip === '127.0.0.1' && p.port === 4000));
 
     console.log(`👥 Peers discovered: ${peers.length} `);
