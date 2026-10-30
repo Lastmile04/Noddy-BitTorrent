@@ -1,232 +1,423 @@
 # Noddy BitTorrent
 
-A from-scratch exploration of network protocols using Node.js, focused on
-understanding how networking systems work internally through protocol-correct,
-byte-level implementations.
+A low-level BitTorrent client MVP built from scratch in Node.js without external BitTorrent libraries.
 
-This repository progresses protocol-layer by protocol-layer, starting from
-HTTP fundamentals and TCP behavior before arriving at a working BitTorrent
-protocol MVP.
+This project implements core parts of the BitTorrent ecosystem including custom bencode parsing, HTTP/UDP tracker communication, peer wire protocol handling, and SHA1 piece verification. The goal of the project is to deeply understand networking protocols, binary data handling, and event-driven system design by building the protocol stack manually.
 
-The goal of this project is not production readiness, but deep understanding
-of networking protocols, binary parsing, event-driven systems, and layered
-architecture design.
+The implementation progresses protocol-layer by protocol-layer:
 
----
-
-## Current Demo — BitTorrent MVP
-
-The current milestone implements a functioning BitTorrent protocol MVP featuring:
-
-- HTTP & UDP tracker communication
-- Peer discovery
-- BitTorrent handshakes
-- Piece downloading
-- SHA1 piece verification
-- Stateful terminal dashboard
-
-![BitTorrent Demo](./3_bittorrent/src/assets/demo.gif)
-
-➡️ Full BitTorrent implementation details:
-[View Full BitTorrent Documentation →](./3_bittorrent/readme.md)
-
----
-
-## Repository Structure
-
-Each top-level folder represents a protocol layer or networking milestone,
-implemented independently and incrementally.
-
-```txt
-bittorrent_from_scratch/
-├── 1_http/          # HTTP fundamentals from raw sockets
-├── 2_tcp/           # TCP framing, buffering, state machines
-├── 3_bittorrent/    # BitTorrent protocol MVP
-```
-
-Each stage builds upon concepts explored in the previous one.
-
----
-
-## Protocol Progression
-
-### 1. HTTP Fundamentals (`1_http/`)
-
-Exploration of HTTP communication and request/response handling using
-raw socket-level networking primitives.
-
-Key topics explored:
-- HTTP request structure
-- Raw socket communication
-- Request parsing
-- Response serialization
-- Stateful connection handling
-
----
-
-### 2. TCP Behavior & State Machines (`2_tcp/`)
-
-Focused exploration of TCP stream behavior, framing problems, buffering,
-and protocol state management.
-
-Key topics explored:
-- Incremental stream parsing
-- Buffer accumulation
-- Message framing
-- Protocol state machines
-- Event-driven transport behavior
-
----
-
-### 3. BitTorrent Protocol MVP (`3_bittorrent/`)
-
-A low-level BitTorrent client MVP built from scratch without external
-BitTorrent libraries.
-
-Implemented features include:
-- Bencode parsing and validation
-- SHA1 info-hash generation
-- HTTP & UDP tracker communication
+- HTTP communication in Node.js
+- UDP socket programming
+- `.torrent` metadata parsing
+- Tracker communication
 - Peer discovery
 - BitTorrent handshake negotiation
-- Piece/block downloading
-- SHA1 piece verification
-- Stateful terminal observability dashboard
-
-➡️ Detailed documentation:
-[View Full BitTorrent Documentation →](./3_bittorrent/readme.md))
+- Piece/block downloading and verification
 
 ---
 
-## Design Principles
+## Demo
 
-### Grammar Over Guessing
+![NoddyBitTorrent Demo](./src/assets/demo.gif)
 
-All protocol traversal follows protocol grammar rules instead of raw
-byte scanning or heuristic parsing.
+### Example Output
 
-### Identity Before Meaning
+```bash
+📦 Torrent metadata validated
+🔑 Info hash generated
+🌐 Tracker connected
+👥 Peers discovered: 50
+⏱ Announce interval: 900
 
-Torrent identity is derived directly from raw bytes before decoding
-or interpretation occurs.
+╔══════════════════════════════════════════════════════════╗
+║                🚀 NODDY BITTORRENT                      ║
+║           BitTorrent Protocol Implementation            ║
+╚══════════════════════════════════════════════════════════╝
 
-### Separation Of Concerns
+📍 Target: debian-13.3.0-amd64-netinst.iso
 
-Networking, protocol parsing, identity computation, and presentation
-layers remain intentionally separated.
+❌ 193.32.249.228:51413 — Handshake timeout
+❌ 217.155.0.164:42069 — Host unreachable
+✅ Connected Peer: 217.138.216.169:50495
 
-### Protocol Correctness First
+⬇️ Downloading Piece #0
+📊 [■■■■■■■■■■■■■■■■] 100%
 
-The project prioritizes correctness, observability, and architectural
-clarity over performance or feature completeness.
+✅ Piece #0 verified successfully
+🔐 SHA1 integrity check passed
 
----
-
-## Current Status
-
-### HTTP Layer
-- ✅ Raw HTTP exploration complete
-
-### TCP Layer
-- ✅ TCP framing and state machine experiments complete
-
-### BitTorrent Layer
-- ✅ Torrent metadata parsing
-- ✅ HTTP tracker communication
-- ✅ UDP tracker communication
-- ✅ Peer discovery
-- ✅ BitTorrent handshake implementation
-- ✅ Piece downloading
-- ✅ SHA1 piece verification
-- 🚧 Multi-piece downloading
-- 🚧 Seeding/upload support
-- 🚧 Magnet link support
-- 🚧 DHT & PEX support
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📥 DOWNLOAD SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📄 Torrent:            debian-13.3.0-amd64-netinst.iso
+👥 Peers Contacted:    3
+✅ Successful Peers:   1
+❌ Failed Peers:       2
+🔐 Integrity Check:    PASSED (SHA1)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
 
 ---
 
-## What This Repository Focuses On
+## Features
 
-This project intentionally emphasizes:
+### Torrent & Metadata Handling
+- Custom bencode parser and validator
+- SHA1 info-hash generation
+- Torrent metadata extraction
 
-- Networking fundamentals
-- Binary protocol parsing
-- Stateful protocol design
+### Tracker Protocols
+- HTTP tracker implementation
+- UDP tracker implementation
+- Compact and non-compact peer parsing
+- IPv4 and IPv6 peer support
+
+### Peer Wire Protocol
+- TCP peer communication
+- BitTorrent handshake implementation
+- Bitfield and HAVE message handling
+- Interested / unchoke flow
+- Piece/block request pipeline
+
+### Reliability & Validation
+- Retry and timeout handling
+- Incremental TCP stream parsing
+- Piece SHA1 verification
+- Defensive protocol validation
+
+### CLI & Observability
+- Stateful terminal peer dashboard
+- Live peer connection visualization
+- Download summaries and integrity reporting
+
+---
+
+## Protocol Flow
+
+```txt
+.torrent file
+      ↓
+Bencode Parsing
+      ↓
+Info Hash Generation
+      ↓
+Tracker Communication
+      ↓
+Peer Discovery
+      ↓
+TCP Peer Connection
+      ↓
+BitTorrent Handshake
+      ↓
+Bitfield Negotiation
+      ↓
+Interested / Unchoke
+      ↓
+Block Downloading
+      ↓
+SHA1 Piece Verification
+```
+
+---
+
+## Download Lifecycle
+
+### 1. Torrent Parsing
+
+The client reads the `.torrent` file, validates the bencode structure,
+extracts the raw `info` dictionary bytes, and computes the SHA1 info-hash
+used for tracker and peer identification.
+
+### 2. Tracker Communication
+
+The client builds BitTorrent announce requests and communicates with
+trackers using both HTTP and UDP tracker protocols. Tracker responses
+are validated, decoded, and normalized into a unified peer representation
+used by the transport layer.
+
+### 3. Peer Discovery
+
+Peers returned by trackers are parsed from compact and non-compact formats,
+supporting both IPv4 and IPv6 peer addresses. The discovery layer also
+handles peer deduplication before peers are passed to the connection stage.
+
+### 4. TCP Peer Connection
+
+Peers returned by the tracker are contacted sequentially. The client
+attempts to establish a TCP connection and applies timeout handling
+to avoid hanging on unreachable peers.
+
+### 5. BitTorrent Handshake
+
+After establishing a TCP connection, the client performs the BitTorrent
+handshake by exchanging protocol identifiers, reserved bytes, info-hashes,
+and peer IDs. The received info-hash is validated to ensure both peers
+are communicating about the same torrent.
+
+### 6. Bitfield Negotiation
+
+Peers advertise available pieces using `BITFIELD` and `HAVE` messages.
+The client analyzes peer piece availability to determine which pieces
+can be requested from the remote peer.
+
+### 7. Interested / Unchoke Flow
+
+Once a valid downloadable piece is identified, the client sends an
+`INTERESTED` message to the peer. Block requests are only sent after
+the remote peer responds with an `UNCHOKE` message.
+
+### 8. Block Downloading
+
+After receiving an `UNCHOKE` message, the client requests fixed-size
+blocks from the selected piece. Incoming TCP data is buffered and parsed
+incrementally to handle fragmented peer-wire messages correctly.
+
+### 9. SHA1 Piece Verification
+
+After all blocks for a piece are downloaded, the client computes the
+SHA1 hash of the reconstructed piece buffer and compares it against the
+expected hash stored inside the torrent metadata. This guarantees piece
+integrity and prevents corrupted or malicious data from being accepted.
+
+---
+
+## Architecture
+
+```txt
+src/
+├── app/           # Application orchestration
+├── codec/         # Bencode parser/validator
+├── identity/      # SHA1 hashing and peer identity
+├── peers/         # Peer parsing utilities
+├── tracker/       # HTTP/UDP tracker communication
+├── transport/     # Peer wire protocol implementation
+└── presentation/  # CLI rendering and status dashboard
+```
+
+---
+
+## Key Engineering Challenges
+
+### Incremental TCP Stream Parsing
+
+Peer-wire messages may arrive fragmented across multiple TCP packets.
+The transport layer buffers incoming data incrementally and only parses
+messages once sufficient bytes have been received.
+
+### Handling Unreliable Peers
+
+Many peers returned by trackers are unreachable, timeout, or terminate
+connections unexpectedly. The client implements retry and timeout handling
+to survive unreliable distributed network behavior.
+
+### Protocol Validation
+
+Tracker responses, handshakes, and peer-wire messages are validated
+defensively to prevent malformed protocol data from propagating through
+higher layers of the application.
+
+### Asynchronous State Coordination
+
+The project heavily relies on event-driven architecture and asynchronous
+network communication. Coordinating peer states, timeouts, retries,
+downloads, and CLI rendering required careful separation of concerns.
+
+### Terminal Rendering Synchronization
+
+The CLI dashboard evolved into a state-driven renderer responsible for
+displaying peer lifecycle updates, progress visualization, and integrity
+verification while avoiding terminal corruption caused by concurrent writes.
+
+---
+
+## Design Philosophy
+
+This project prioritizes protocol correctness, observability,
+and architectural clarity over download throughput or feature
+completeness.
+
+The primary focus of the MVP is understanding how the BitTorrent
+ecosystem works internally by implementing networking layers manually
+instead of relying on existing BitTorrent libraries.
+
+---
+
+## Current Limitations
+
+This project is currently an MVP focused on protocol correctness,
+networking fundamentals, and understanding the BitTorrent ecosystem
+internally rather than maximizing download throughput.
+
+Current limitations include:
+
+- Sequential peer connection attempts
+- Single-piece downloading
+- No rarest-first piece selection strategy
+- No request pipelining
+- No upload/seeding support
+- No persistent file writing to disk
+- No magnet link support
+- No DHT (Distributed Hash Table) support
+- No Peer Exchange (PEX)
+- Limited peer state management
+- CLI currently optimized for debugging/demo usage
+
+These tradeoffs were intentionally made to simplify debugging and
+validate protocol behavior incrementally while building the client
+layer-by-layer.
+
+---
+
+## What I Learned
+
+Building this project provided hands-on experience with:
+
+### Networking & Protocols
+- TCP and UDP socket programming in Node.js
+- Binary protocol parsing and serialization
+- HTTP and UDP tracker protocol behavior
+- BitTorrent peer wire protocol lifecycle
+- Stateful peer communication
+
+### Systems Programming Concepts
 - Event-driven architecture
-- Layered system organization
-- Incremental protocol implementation
-- Observability and debugging
+- Incremental TCP stream parsing
+- Buffer management and binary data handling
+- Retry and timeout strategies
+- Protocol validation and defensive parsing
+- State synchronization in asynchronous systems
 
-rather than:
-- maximum download throughput
-- production-grade optimization
-- feature completeness
+### BitTorrent Internals
+- Torrent metadata structure
+- SHA1 info-hash generation
+- Peer discovery workflows
+- Bitfield negotiation
+- Piece/block request flow
+- Piece integrity verification
 
----
-
-## Why This Repository Exists
-
-Many networking and protocol implementations fail due to subtle mistakes such as:
-
-- Hashing decoded or re-encoded data
-- Treating TCP like packet-based transport
-- Mixing protocol parsing with transport logic
-- Ignoring fragmented stream behavior
-- Coupling observability directly to networking layers
-- Treating protocols as data formats instead of state machines
-
-This repository exists to deeply understand and avoid those pitfalls
-through manual implementation and architectural separation.
+### Engineering & Architecture
+- Layered system design
+- Separation of transport and presentation logic
+- CLI observability and protocol visualization
+- Handling unreliable distributed systems gracefully
 
 ---
 
-## Technologies Used
+## How To Run
 
-- Node.js
-- TCP sockets (`net`)
-- UDP sockets (`dgram`)
-- Event-driven architecture
-- SHA1 hashing
-- Binary buffer manipulation
+### Prerequisites
+
+- Node.js v18+
+- A `.torrent` file
+
+### Clone Repository
+
+```bash
+git clone <your-repository-url>
+cd bittorrent_from_scratch/3_bittorrent
+```
+
+### Install Dependencies
+
+```bash
+npm install
+```
+
+### Configure Torrent File
+
+Place a `.torrent` file inside the `samples/` directory and update
+the path inside:
+
+```txt
+src/app/main.js
+```
+
+### Run Client
+
+```bash
+node src/app/main.js
+```
 
 ---
 
-## Future Roadmap
+## Roadmap
 
-### BitTorrent Improvements
-- Parallel peer racing
+### Core BitTorrent Features
+- Parallel peer connection racing
 - Multi-piece downloading
-- Rarest-first piece selection
 - Request pipelining
+- Rarest-first piece selection
+- Endgame mode
 - Persistent file storage
-- Upload/seeding support
-- Magnet links
-- DHT implementation
-- Peer Exchange (PEX)
 
-### Tooling & Observability
-- Richer CLI dashboard
-- Transfer speed monitoring
+### Network Features
+- Upload/seeding support
+- Magnet link support
+- DHT support
+- Peer Exchange (PEX)
+- Tracker tier fallback improvements
+- Better peer choking/unchoking strategies
+
+### Performance & Reliability
+- Buffer pooling
+- Smarter retry strategies
+- Peer reputation handling
+- Download scheduling improvements
+- Memory usage optimization
+
+### CLI & Tooling
+- Richer terminal dashboard
+- Transfer statistics and speed monitoring
 - Verbose/debug logging modes
+- Better progress visualization
 - Interactive torrent selection
-- Better terminal visualization
+
+---
+
+## References
+
+- BEP 3 — BitTorrent Protocol Specification
+- BEP 15 — UDP Tracker Protocol
+- Node.js `net` module documentation
+- Node.js `dgram` module documentation
 
 ---
 
 ## Disclaimer
 
-This repository was built for educational purposes to understand networking
-protocols and systems-level behavior internally.
-
-Please use responsibly and only download/share content you legally have
-the right to access.
+This project was built for educational purposes to understand how the
+BitTorrent ecosystem works internally. Please use responsibly and only
+download/share content you legally have the right to access.
 
 ---
 
-## Author
+## Project Completion Roadmap
 
-Built by Lastmile04 as a deep dive into:
-- networking protocols
-- systems-level thinking
-- event-driven architecture
-- low-level protocol implementation
+v0.1
+ |
+ |-- AST/grammar cleanup
+ |
+v0.2
+ |
+ |-- Download all pieces
+ |-- Verify SHA1
+ |-- Write disk
+ |
+v0.3
+ |
+ |-- Multiple peer connections
+ |-- Concurrent requests
+ |
+v0.4
+ |
+ |-- Extract piece manager interface
+ |
+v0.5
+ |
+ |-- Rewrite piece manager as Go service
+ |
+v1.0
+ |
+ |-- Resume
+ |-- TUI
+ |-- Magnet links

@@ -1,6 +1,9 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Buffer } from 'buffer';
+import * as readline from 'node:readline/promises';
+import { stdin as input, stdout as output } from 'node:process';
+import * as fs from 'node:fs/promises';
 
 import { generatePeerId } from '../identity/peerId.js';
 import { parseTorrentFile } from './torrent-loader.js';
@@ -48,14 +51,76 @@ function printSummary(stats: {
 `);
 }
 
+// Helper utility to safely prompt user with a fresh readline interface each time
+async function askUser(query: string): Promise<string> {
+    const rl = readline.createInterface({ input, output });
+    try {
+        return await rl.question(query);
+    } finally {
+        rl.close();
+    }
+}
+
 async function run() {
-    const torrentPath: string = path.resolve(__dirname, '../../samples/debian.torrent');
-    const torrentMeta = parseTorrentFile(torrentPath);
+    // Correct path to root-level samples folder from src/app/
+    const defaultTorrentPath = path.resolve(__dirname, '../../samples/debian.torrent');
+    const defaultDownloadDir = path.resolve(process.cwd(), 'downloads');
+
+    let torrentMeta: any;
+    let totalLength = 0;
+    let peers: any[] = [];
+
+    // Handle Ctrl+C cleanly
+    process.on('SIGINT', () => {
+        console.log('\n\n❌ Download cancelled by user.');
+        process.exit(0);
+    });
+
+    // 1. Prompt for .torrent file path with a safe validation loop
+    while (true) {
+        try {
+            console.log(`\n📄 Default torrent file: ${defaultTorrentPath}`);
+            const answer = await askUser('👉 Enter path to .torrent file (or press Enter for default): ');
+            const torrentPath = answer.trim().length > 0 ? path.resolve(answer.trim()) : defaultTorrentPath;
+
+            torrentMeta = parseTorrentFile(torrentPath);
+            totalLength = torrentMeta.totalLength;
+            break;
+        } catch (err: any) {
+            console.error(`\n❌ [Torrent Error]: Failed to load torrent file: ${err.message}`);
+            console.log(`⚠️ Please check the file path and try again.`);
+        }
+    }
 
     printBanner(torrentMeta.name.toString());
-
     const peerId: Buffer = generatePeerId('PC', '0001');
-    const totalLength: number = torrentMeta.totalLength;
+
+    // 2. Prompt for download path and validate disk space / pre-allocation with a safe retry loop
+    while (true) {
+        try {
+            console.log(`\n📂 Default download directory: ${defaultDownloadDir}`);
+            const answer = await askUser('👉 Enter download folder path (or press Enter for default): ');
+            const targetDir = answer.trim().length > 0 ? path.resolve(answer.trim()) : defaultDownloadDir;
+
+            console.log(`\n🔍 Checking storage and pre-allocating space at: ${targetDir}...`);
+
+            await fs.mkdir(targetDir, { recursive: true });
+            const stats = await fs.statfs(targetDir);
+            const availableBytes = stats.bavail * stats.bsize;
+
+            console.log(`📦 Required Space: ${(totalLength / 1024 / 1024).toFixed(2)} MB`);
+            console.log(`💾 Available Space: ${(availableBytes / 1024 / 1024).toFixed(2)} MB`);
+
+            if (availableBytes < totalLength) {
+                throw new Error(`Insufficient disk space! Required: ${(totalLength / 1024 / 1024).toFixed(2)} MB, Available: ${(availableBytes / 1024 / 1024).toFixed(2)} MB`);
+            }
+
+            break;
+        } catch (err: any) {
+            console.error(`\n❌ [Storage/Allocation Error]: ${err.message}`);
+            console.log(`⚠️ Please provide a correct path with enough space for the file.`);
+        }
+    }
 
     const trackerParams: TrackerParams = {
         infoHash: torrentMeta.infoHash,
@@ -68,11 +133,11 @@ async function run() {
         event: 'started',
     };
 
-    console.log('🌐 Contacting tracker...');
+    console.log('\n🌐 Contacting tracker...');
     const result = await urlDispatcher(torrentMeta.announceList, trackerParams);
 
     // --- Filter out self (127.0.0.1:4000) directly from the raw peers list ---
-    const peers = result.peers.filter((p: any) => !(p.ip === '127.0.0.1' && p.port === 4000));
+    peers = result.peers.filter((p: any) => !(p.ip === '127.0.0.1' && p.port === 4000));
 
     console.log(`👥 Peers discovered: ${peers.length} `);
     console.log(`⏱ Announce interval: ${result.peerStats.interval}\n`);
@@ -109,11 +174,6 @@ async function run() {
         const numPercent = totalLength > 0 ? (download.session.completedBytes / totalLength) : 0;
         const filledLength = Math.round(barLength * numPercent);
         const bar = '█'.repeat(Math.max(0, filledLength)) + '░'.repeat(Math.max(0, barLength - filledLength));
-
-        // Original line commented out
-        // process.stdout.write(
-        //     `\r\x1b[K📥 Progress: ${percent}% | Down: ${downloadedMB} / ${totalMB} MB | Speed: ${currentSpeedMBs.toFixed(2)} MB/s | Active Peers: ${lastActivePeers} | Failed: ${lastFailedPeers}`
-        // );
 
         process.stdout.write(
             `\r\x1b[K📥 [${bar}] ${percent}% | Down: ${downloadedMB} / ${totalMB} MB | Speed: ${currentSpeedMBs.toFixed(2)} MB/s | Active Peers: ${lastActivePeers} | Failed: ${lastFailedPeers}`
