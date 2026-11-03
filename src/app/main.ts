@@ -8,7 +8,7 @@ import * as fs from 'node:fs/promises';
 import { generatePeerId } from '../identity/peerId.js';
 import { parseTorrentFile } from './torrent-loader.js';
 import { urlDispatcher } from '../tracker/urlDispatcher.js';
-import { TrackerParams } from './types.js';
+import { TorrentMeta, TrackerParams } from './types.js';
 import { DownloadManager } from '../download/DownloadManager.js';
 
 const port = 4000;
@@ -67,7 +67,7 @@ async function run() {
     const defaultTorrentPath = path.resolve(__dirname, '../../samples/debian.torrent');
     const defaultDownloadDir = path.resolve(process.cwd(), 'downloads');
 
-    let torrentMeta: any;
+    let torrentMeta: TorrentMeta;
     let totalLength = 0;
     let peers: any[] = [];
 

@@ -152,28 +152,6 @@ export function parseCompactPeers(family, buffer) {
 
 }
 
-// listIR is a list of dictionaries with each dictionary containing key value pair of ip and port
-/** listIR structure for better visualization
- * listIR = {
-  type: 'List',
-  value: [
-    {
-      type: 'Dictionary',
-      value: [
-        [Buffer('ip'),   { type: 'String', value: Buffer('1.2.3.4') }],
-        [Buffer('port'), { type: 'Integer', value: 6881 }]
-      ]
-    },
-    {
-      type: 'Dictionary',
-      value: [
-        [Buffer('ip'),   { type: 'String', value: Buffer('5.6.7.8') }],
-        [Buffer('port'), { type: 'Integer', value: 6881 }]
-      ]
-    }
-  ]
-}
- */
 export function parseNonCompactPeers(listNode) {
     let peers = [];
 
@@ -182,7 +160,7 @@ export function parseNonCompactPeers(listNode) {
         let port = null;
 
         for (const [keyNode, valueNode] of peerDict.value) {
-            if(keyNode.type !== 'BYTE_STRING') throw new Error(' received non-compact peers do not have string as dict key'); 
+            if (keyNode.type !== 'BYTE_STRING') throw new Error(' received non-compact peers do not have string as dict key');
             const keyStr = keyNode.value.toString('utf-8');
             if (keyStr === 'ip' && valueNode.type === 'BYTE_STRING') {
                 ipStr = valueNode.value.toString('utf-8');
@@ -195,6 +173,6 @@ export function parseNonCompactPeers(listNode) {
             peers.push({ ip: ipStr, port });
         }
     }
- 
+
     return peers;
 }
