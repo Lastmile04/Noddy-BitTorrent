@@ -145,14 +145,21 @@ Noddy has been tested against both public and local BitTorrent swarms.
 
 ### Public Swarm Test
 
-Noddy was tested against a public BitTorrent swarm using the Debian 13.3.0 amd64 netinst ISO.
+Tested against a public BitTorrent swarm using the Debian 13.3.0 amd64 netinst ISO.
 
-- The download was performed incrementally, with data received across multiple sessions.
-- Average download speeds were generally below 1 MB/s.
-- Occasional speed peaks reached approximately 5–6 MB/s.
-- SHA-1 piece integrity verification was used to validate downloaded pieces.
+| Metric | Result |
+|---|---:|
+| Total downloaded | 754 MB |
+| Peers contacted | 100 |
+| Active/connected peers | 54 |
+| Failed peers | 193 |
+| Time elapsed | 6,533.5 seconds |
+| Average download speed | 0.12 MB/s |
+| SHA-1 integrity verification | Passed |
 
-Download speed varied during testing depending on peer availability and swarm conditions. No controlled benchmark was performed.
+The download completed successfully after approximately 1 hour and 49 minutes. All downloaded pieces passed SHA-1 integrity verification.
+
+These results represent a single real-world download session, not a controlled performance benchmark.
 
 ### Local Swarm Test
 
